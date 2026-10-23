@@ -36,11 +36,13 @@ public enum OfferRecognition {
     private static let slotCenters: [Double] = [0.195, 0.440, 0.680]
     private static let titleBand: ClosedRange<Double> = 0.43...0.82
 
-    /// Legendary groups can occupy a narrower row than regular draft offers.
-    /// Require three aligned title boxes and corroborate unreadable titles with
-    /// unique rules text directly beneath that same card, never a guessed name.
-    private static func legendaryOffer(lines: [RecognizedLine], catalog: CatalogIndex) -> OfferRecognitionResult? {
+    /// The board can occupy a narrower row when the deck sidebar is visible.
+    /// Require three evenly spaced title boxes. Only legendary-group screens
+    /// may recover a damaged title using unique rules text beneath that card.
+    private static func alignedOffer(lines: [RecognizedLine], catalog: CatalogIndex,
+                                     allowRulesRecovery: Bool) -> OfferRecognitionResult? {
         let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.795 }
+            .sorted { $0.y > $1.y }
         for anchor in titles {
             guard catalog.matchOCR(anchor.text) != nil else { continue }
             let row = titles.filter { abs($0.y - anchor.y) < 0.025 }.sorted { $0.x < $1.x }
@@ -63,6 +65,7 @@ public enum OfferRecognition {
                     names.append(match.card.name)
                     continue
                 }
+                guard allowRulesRecovery else { break }
                 let title = group[0]
                 let body = lines.filter {
                     abs($0.x - title.x) < min(leftGap, rightGap) * 0.3 &&
@@ -73,16 +76,18 @@ public enum OfferRecognition {
             }
             if names.count == 3, Set(names).count == 3 {
                 return OfferRecognitionResult(names: names, matched: names,
-                    message: "Recognized legendary group: " + names.joined(separator: " | "))
+                    message: "Recognized aligned draft titles: " + names.joined(separator: " | "))
             }
         }
         return nil
     }
 
     public static func findOffer(lines: [RecognizedLine], catalog: CatalogIndex, playerClass: String) -> OfferRecognitionResult {
-        if lines.contains(where: { CatalogIndex.normalize($0.text).contains("choose a legendary group") }),
-           let legendary = legendaryOffer(lines: lines, catalog: catalog) {
-            return legendary
+        let isLegendaryGroup = lines.contains {
+            CatalogIndex.normalize($0.text).contains("choose a legendary group")
+        }
+        if let aligned = alignedOffer(lines: lines, catalog: catalog, allowRulesRecovery: isLegendaryGroup) {
+            return aligned
         }
         var slots: [[Item]] = [[], [], []]
         for line in lines {

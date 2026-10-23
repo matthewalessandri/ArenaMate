@@ -234,6 +234,16 @@ final class DraftTitleRegressionTests: XCTestCase {
         XCTAssertFalse(offer.matched.contains("Murloc"))
         XCTAssertFalse(offer.matched.contains("Magnetic"))
     }
+    func testNormalOfferCompressedByDeckSidebarKeepsLeftMiddleRight() {
+        let lines = [
+            RecognizedLine(text: "Muscle-o-Tron", x: 0.247, y: 0.610),
+            RecognizedLine(text: "Bayfin Bodybuilder", x: 0.408, y: 0.611),
+            RecognizedLine(text: "Noble Minibot", x: 0.558, y: 0.609),
+            RecognizedLine(text: "Murloc", x: 0.408, y: 0.46)
+        ]
+        XCTAssertEqual(OfferRecognition.findOffer(lines: lines, catalog: catalog, playerClass: "ALL").names,
+            ["Muscle-o-Tron", "Bayfin Bodybuilder", "Noble Minibot"])
+    }
     func testMissingTitleIsNotFilledWithKeyword() {
         let lines = [
             RecognizedLine(text: "Muscle-o-Tron", x: 0.19, y: 0.65),
