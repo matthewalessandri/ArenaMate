@@ -164,15 +164,13 @@ public enum DraftScorer {
         if mechanics.contains("MAGNETIC") || text.contains("magnetic"),
            let partner = minions.first(where: { $0.tribes.contains("MECH") }) {
             diff += 3; reasons.append("Magnetic target drafted")
-            insights.append((5, "You can magnetize this onto a Mech like \(partner.name) when it's on your board."))
+            insights.append((5, "This fits the Mechs you've already drafted, including \(partner.name)."))
         }
         if isBoardClear(card) {
             let clears = picks.filter { isBoardClear($0.card) }.count
             if picks.count >= 4 && clears == 0 {
                 diff += 4; reasons.append("First board clear")
-                insights.append((6, "You don't have a board clear yet. This gives you a way to deal with several enemy minions at once."))
-            } else {
-                insights.append((1, "This gives you a way to deal with several enemy minions at once."))
+                insights.append((6, "You don't have a board clear yet, and this fills that gap."))
             }
         }
         let bounded = max(-9, min(9, diff))
@@ -206,32 +204,9 @@ public enum DraftScorer {
         if let insight = insights.max(by: { $0.priority < $1.priority }) {
             lead = insight.text
         } else if imported {
-            lead = "Your imported ratings favor this pick. I don't see a specific deck combo behind it."
+            lead = "Your imported ratings favor \(card.name) here."
         } else {
-            let mechanics = Set((card.mechanics ?? []).map { $0.uppercased() })
-            let text = card.plainText.lowercased()
-            if mechanics.contains("RUSH") {
-                lead = "Rush lets this minion contest an enemy minion as soon as you play it."
-            } else if mechanics.contains("DIVINE_SHIELD") {
-                lead = "Divine Shield lets this minion absorb a hit without taking damage, which can help it trade."
-            } else if mechanics.contains("TAUNT") {
-                lead = "Taunt gives you a defender that enemy attacks have to get through first."
-            } else if mechanics.contains("LIFESTEAL") {
-                lead = "Lifesteal can help you recover health when this deals damage."
-            } else if mechanics.contains("CHARGE") {
-                lead = "Charge lets this minion attack immediately when you play it."
-            } else if text.contains("discover") {
-                lead = "Discover gives you a choice of resources to help find something useful."
-            } else if text.contains("draw a card") {
-                lead = "The card draw helps keep options in your hand."
-            } else if text.contains("destroy a minion") || text.contains("destroy an enemy minion") {
-                lead = "This gives you removal for a minion you can't comfortably trade into."
-            } else if card.type == "MINION", let cost = card.cost, let attack = card.attack, let health = card.health,
-                      attack + health > cost * 2 + 1 {
-                lead = "A \(attack)/\(health) for \(cost) mana gives you good raw stats for the cost."
-            } else {
-                lead = "I'd take \(card.name) on its estimated standalone value here, rather than for a specific deck combo."
-            }
+            lead = "I'd take \(card.name) for its estimated standalone value here."
         }
         if let caution = cautions.max(by: { $0.priority < $1.priority }) {
             return lead + " " + caution.text

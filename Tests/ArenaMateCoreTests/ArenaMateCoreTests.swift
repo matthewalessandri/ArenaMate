@@ -307,7 +307,7 @@ final class RecommendationExplanationTests: XCTestCase {
     func testMagneticOnlyNamesADraftedMech() {
         let card = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], race: "MECH")
         let partner = ArenaCard(id: "M", name: "Muscle-o-Tron", cost: 3, type: "MINION", race: "MECH")
-        XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("magnetize this onto a Mech like Muscle-o-Tron"))
+        XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("Mechs you've already drafted, including Muscle-o-Tron"))
         XCTAssertFalse(score(card).explanation.contains("magnetize"))
     }
     func testOpponentSpellTriggerDoesNotClaimSynergyWithOwnSpells() {
@@ -336,10 +336,14 @@ final class RecommendationExplanationTests: XCTestCase {
         let dual = ArenaCard(id: "D", name: "Dual tribe", races: ["DRAGON", "BEAST"])
         XCTAssertEqual(dual.tribes, ["DRAGON", "BEAST"])
     }
-    func testIntrinsicAbilityAndImportedFallbackDoNotInventDeckNeed() {
-        let rush = ArenaCard(id: "R", name: "Rusher", cost: 4, type: "MINION", mechanics: ["RUSH"])
-        XCTAssertTrue(score(rush).explanation.contains("Rush lets this minion"))
-        XCTAssertFalse(score(rush).explanation.contains("This is my pick"))
+    func testFallbackDoesNotTeachKeywordsOrInventDeckNeed() {
+        for mechanic in ["RUSH", "TAUNT", "LIFESTEAL", "DIVINE_SHIELD", "CHARGE"] {
+            let card = ArenaCard(id: "R", name: "Strong Minion", cost: 4, type: "MINION", mechanics: [mechanic])
+            let explanation = score(card).explanation
+            XCTAssertTrue(explanation.contains("Strong Minion"))
+            XCTAssertTrue(explanation.contains("standalone value"))
+            XCTAssertFalse(explanation.lowercased().contains(mechanic.lowercased()))
+        }
         let plain = ArenaCard(id: "V", name: "Plain Minion", cost: 4, type: "MINION")
         var ratings = ExternalRatings(); ratings.byId["V"] = 90
         let rated = score(plain, ratings: ratings)
