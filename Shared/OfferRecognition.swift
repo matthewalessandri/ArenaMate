@@ -31,7 +31,7 @@ public enum OfferRecognition {
     /// The slot bounds are deliberately conservative: if any card is unreadable,
     /// return no recommendation rather than mapping a fourth card to the wrong pick.
     private static let slotRanges: [ClosedRange<Double>] = [
-        0.075...0.315, 0.325...0.555, 0.565...0.795
+        0.075...0.315, 0.325...0.555, 0.565...0.735
     ]
     private static let slotCenters: [Double] = [0.195, 0.440, 0.680]
     private static let titleBand: ClosedRange<Double> = 0.43...0.82
@@ -41,7 +41,7 @@ public enum OfferRecognition {
     /// may recover a damaged title using unique rules text beneath that card.
     private static func alignedOffer(lines: [RecognizedLine], catalog: CatalogIndex,
                                      allowRulesRecovery: Bool) -> OfferRecognitionResult? {
-        let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.795 }
+        let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.735 }
             .sorted { $0.y > $1.y }
         for anchor in titles {
             guard catalog.matchOCR(anchor.text) != nil else { continue }
@@ -60,6 +60,9 @@ public enum OfferRecognition {
                 let candidateGroups = Array(groups[offset..<(offset + 3)])
                 let xs = candidateGroups.map { $0[0].x }
                 let leftGap = xs[1] - xs[0], rightGap = xs[2] - xs[1]
+                // The first displayed card must still be in the left board
+                // column; never shift middle/right/sidebar text into slots 1–3.
+                guard slotRanges[0].contains(xs[0]) else { continue }
                 guard leftGap >= 0.12, leftGap <= 0.28,
                       rightGap >= 0.12, rightGap <= 0.28,
                       abs(leftGap - rightGap) < 0.045 else { continue }

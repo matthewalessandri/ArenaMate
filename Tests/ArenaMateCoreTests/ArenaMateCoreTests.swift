@@ -376,6 +376,18 @@ final class SidebarTitleRegressionTests: XCTestCase {
         XCTAssertEqual(OfferRecognition.findOffer(lines: observations, catalog: catalog, playerClass: "ALL").names,
                        Array(names.prefix(3)))
     }
+    func testEvenlySpacedMiddleRightAndSidebarCannotShiftIntoThreeSlots() {
+        let shifted = [RecognizedLine(text: names[1], x: 0.408, y: 0.61),
+                       RecognizedLine(text: names[2], x: 0.558, y: 0.61),
+                       RecognizedLine(text: names[3], x: 0.708, y: 0.61)]
+        XCTAssertNil(OfferRecognition.findOffer(lines: shifted, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testSidebarTitleIsExcludedEvenWhenEvenlySpacedWithTwoBoardTitles() {
+        let outsideBoard = [RecognizedLine(text: names[0], x: 0.27, y: 0.61),
+                            RecognizedLine(text: names[1], x: 0.51, y: 0.61),
+                            RecognizedLine(text: names[3], x: 0.75, y: 0.61)]
+        XCTAssertNil(OfferRecognition.findOffer(lines: outsideBoard, catalog: catalog, playerClass: "ALL").names)
+    }
     func testSidebarCannotReplaceUnreadableThirdTitle() {
         var missing = lines
         missing.remove(at: 2)
