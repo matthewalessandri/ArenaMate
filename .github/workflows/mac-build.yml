@@ -1,0 +1,55 @@
+name: Build ArenaMate for macOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Test core recognition and scoring
+        run: swift test --scratch-path "$RUNNER_TEMP/arenamate-swift-build"
+      - name: Build Mac application
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project ArenaMate.xcodeproj -scheme ArenaMate -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/ArenaMateDerivedData" \
+            CODE_SIGNING_ALLOWED=YES 'CODE_SIGN_IDENTITY=-' build
+          test -d "$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app"
+      - name: Package DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist "$RUNNER_TEMP/ArenaMateDisk"
+          ditto "$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app" \
+            "$RUNNER_TEMP/ArenaMateDisk/ArenaMate.app"
+          ln -s /Applications "$RUNNER_TEMP/ArenaMateDisk/Applications"
+          hdiutil create -quiet -volname ArenaMate -srcfolder "$RUNNER_TEMP/ArenaMateDisk" \
+            -format UDZO -ov dist/ArenaMate.dmg
+          shasum -a 256 dist/ArenaMate.dmg > dist/ArenaMate.dmg.sha256
+      - name: Save downloadable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArenaMate-macOS
+          path: |
+            dist/ArenaMate.dmg
+            dist/ArenaMate.dmg.sha256
+      - name: Attach DMG to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/ArenaMate.dmg dist/ArenaMate.dmg.sha256 --clobber
