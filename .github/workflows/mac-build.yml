@@ -61,7 +61,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$BUILD_VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$app/Contents/Info.plist")" = true
           codesign --verify --deep --strict "$app"
-          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/ArenaMate"
+          lipo "$app/Contents/MacOS/ArenaMate" -verify_arch arm64 x86_64
       - name: Package DMG and update archive
         shell: bash
         run: |
