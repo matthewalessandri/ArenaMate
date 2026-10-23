@@ -16,6 +16,7 @@ public struct ScoreDetail: Sendable {
     public let label: String
     public let reasons: [String]
     public let hasExternalRating: Bool
+    public let explanation: String
 }
 
 public struct ExternalRatings: Sendable {
@@ -93,6 +94,8 @@ public enum DraftScorer {
         let imported = ratings.score(card: card, playerClass: playerClass)
         let base = imported ?? heuristic(card)
         var diff = 0.0, reasons: [String] = []
+        var insights: [(priority: Double, text: String)] = []
+        var cautions: [(priority: Double, text: String)] = []
         let cost = card.cost ?? 0
         let minions = picks.map(\.card).filter { $0.type == "MINION" }
         let early = picks.filter { ($0.card.cost ?? 0) <= 2 && $0.card.type == "MINION" }.count
@@ -100,42 +103,140 @@ public enum DraftScorer {
         let effectiveTarget = max(4, Int(Double(max(1, picks.count)) * 0.26))
         if card.type == "MINION" && (1...2).contains(cost) && early < effectiveTarget {
             diff += 3; reasons.append("Helps early-game curve")
+            insights.append((3, picks.isEmpty
+                ? "I'd start with this early play to help build a smooth curve."
+                : "You're short on early minions. This gives you another play before turn three."))
         }
         if cost >= 6 && expensive >= max(2, picks.count / 7) {
             diff -= 4; reasons.append("Already heavy at 6+ mana")
+            cautions.append((4, "Your deck is already heavy at six mana and up, so watch your curve."))
         }
         let text = card.plainText.lowercased()
         let allTexts = picks.map { $0.card.plainText.lowercased() }
         let spellCount = picks.filter { $0.card.type == "SPELL" }.count
-        if text.contains("spell damage") && spellCount >= 4 {
+        let damageSpells = picks.filter {
+            $0.card.type == "SPELL" && $0.card.plainText.lowercased().contains("deal") &&
+                $0.card.plainText.lowercased().contains("damage")
+        }
+        if text.contains("spell damage"), damageSpells.count >= 2, let partner = damageSpells.first {
             diff += 2; reasons.append("Spell-damage support")
+            insights.append((4, "Spell Damage helps the damage spells you've drafted, including \(partner.card.name)."))
         }
-        if text.contains("spell") && (text.contains("whenever") || text.contains("after you cast")) {
-            if spellCount >= 5 { diff += 3; reasons.append("Fits existing spells") }
-            else if spellCount < 2 { diff -= 3; reasons.append("Few spells for payoff") }
+        if text.contains("spell") && (text.contains("whenever you cast") || text.contains("after you cast")) {
+            if spellCount >= 5 {
+                diff += 3; reasons.append("Fits existing spells")
+                insights.append((3, "You've already drafted \(spellCount) spells to help trigger this card's spell payoff."))
+            }
+            else if spellCount < 2 {
+                diff -= 3; reasons.append("Few spells for payoff")
+                cautions.append((3, "You'll want more spells to get consistent value from its payoff."))
+            }
         }
-        let race = (card.race ?? "").uppercased()
-        if race != "", race != "INVALID" {
-            let matched = minions.filter { $0.race?.uppercased() == race }.count
-            if matched >= 3 { diff += 2; reasons.append("\(race.capitalized) density") }
+        let cardTribes = card.tribes
+        for tribe in cardTribes.sorted() {
+            let matched = minions.filter { $0.tribes.contains(tribe) }.count
+            if matched >= 3 { diff += 2; reasons.append("\(tribe.capitalized) density") }
         }
         // A card that demands a tribe can be a liability with no enablers.
         let tribes = ["dragon", "beast", "mech", "elemental", "demon", "murloc", "pirate", "undead"]
         for tribe in tribes {
-            if (text.contains("if you're holding a \(tribe)") || text.contains("if you control a \(tribe)") || text.contains("your \(tribe)s")) &&
-                !picks.contains(where: { $0.card.race?.lowercased() == tribe }) {
-                diff -= 6; reasons.append("No \(tribe) support drafted")
+            if supportsTribe(text, tribe: tribe) {
+                let enablers = minions.filter { $0.tribes.contains(tribe.uppercased()) }
+                if let partner = enablers.first {
+                    diff += 3; reasons.append("Supported \(tribe) payoff")
+                    insights.append((5, "This has \(tribe.capitalized) support already in your deck, including \(partner.name), to help its payoff work."))
+                } else {
+                    diff -= 6; reasons.append("No \(tribe) support drafted")
+                    cautions.append((6, "You haven't drafted any \(tribe.capitalized) support yet, so its payoff still needs help."))
+                }
+            }
+            if cardTribes.contains(tribe.uppercased()),
+               let partner = picks.first(where: { supportsTribe($0.card.plainText.lowercased(), tribe: tribe) }) {
+                diff += 3; reasons.append("Enables drafted \(tribe) payoff")
+                insights.append((5, "This gives \(partner.card.name) another \(tribe.capitalized) to work with."))
             }
         }
         if text.contains("battlecry") && allTexts.filter({ $0.contains("battlecry") }).count >= 5 && text.contains("your battlecries") {
             diff += 2; reasons.append("Battlecry deck synergy")
+            insights.append((3, "You've already drafted several Battlecry minions, so this has Battlecries to support."))
+        }
+        let mechanics = Set((card.mechanics ?? []).map { $0.uppercased() })
+        if mechanics.contains("MAGNETIC") || text.contains("magnetic"),
+           let partner = minions.first(where: { $0.tribes.contains("MECH") }) {
+            diff += 3; reasons.append("Magnetic target drafted")
+            insights.append((5, "You can magnetize this onto a Mech like \(partner.name) when it's on your board."))
+        }
+        if isBoardClear(card) {
+            let clears = picks.filter { isBoardClear($0.card) }.count
+            if picks.count >= 4 && clears == 0 {
+                diff += 4; reasons.append("First board clear")
+                insights.append((6, "You don't have a board clear yet. This gives you a way to deal with several enemy minions at once."))
+            } else {
+                insights.append((1, "This gives you a way to deal with several enemy minions at once."))
+            }
         }
         let bounded = max(-9, min(9, diff))
         let total = max(0, min(100, base + bounded))
         if reasons.isEmpty { reasons.append(imported == nil ? "Estimated from card stats and text" : "Imported base rating") }
         return ScoreDetail(total: total, base: base,
                            label: imported == nil ? "Estimate" : "Imported tier rating",
-                           reasons: reasons, hasExternalRating: imported != nil)
+                           reasons: reasons, hasExternalRating: imported != nil,
+                           explanation: explanation(card, imported: imported != nil, insights: insights, cautions: cautions))
+    }
+
+    private static func supportsTribe(_ text: String, tribe: String) -> Bool {
+        text.contains("if you're holding a \(tribe)") || text.contains("if you control a \(tribe)") ||
+        text.contains("your \(tribe)s") || text.contains("whenever you summon a \(tribe)") ||
+        text.contains("after you summon a \(tribe)")
+    }
+
+    /// Require an actual damaging/destroying effect, not a buff mentioning
+    /// "all minions", a single-target removal, or damage to heroes only.
+    private static func isBoardClear(_ card: ArenaCard) -> Bool {
+        let text = card.plainText.lowercased()
+        return text.contains("destroy all minions") || text.contains("destroy all enemy minions") ||
+            ((text.contains("deal") && text.contains("damage")) &&
+             (text.contains("to all enemy minions") || text.contains("to all minions") || text.contains("to all enemies")))
+    }
+
+    private static func explanation(_ card: ArenaCard, imported: Bool,
+                                    insights: [(priority: Double, text: String)],
+                                    cautions: [(priority: Double, text: String)]) -> String {
+        let lead: String
+        if let insight = insights.max(by: { $0.priority < $1.priority }) {
+            lead = insight.text
+        } else if imported {
+            lead = "Your imported ratings favor this pick. I don't see a specific deck combo behind it."
+        } else {
+            let mechanics = Set((card.mechanics ?? []).map { $0.uppercased() })
+            let text = card.plainText.lowercased()
+            if mechanics.contains("RUSH") {
+                lead = "Rush lets this minion contest an enemy minion as soon as you play it."
+            } else if mechanics.contains("DIVINE_SHIELD") {
+                lead = "Divine Shield lets this minion absorb a hit without taking damage, which can help it trade."
+            } else if mechanics.contains("TAUNT") {
+                lead = "Taunt gives you a defender that enemy attacks have to get through first."
+            } else if mechanics.contains("LIFESTEAL") {
+                lead = "Lifesteal can help you recover health when this deals damage."
+            } else if mechanics.contains("CHARGE") {
+                lead = "Charge lets this minion attack immediately when you play it."
+            } else if text.contains("discover") {
+                lead = "Discover gives you a choice of resources to help find something useful."
+            } else if text.contains("draw a card") {
+                lead = "The card draw helps keep options in your hand."
+            } else if text.contains("destroy a minion") || text.contains("destroy an enemy minion") {
+                lead = "This gives you removal for a minion you can't comfortably trade into."
+            } else if card.type == "MINION", let cost = card.cost, let attack = card.attack, let health = card.health,
+                      attack + health > cost * 2 + 1 {
+                lead = "A \(attack)/\(health) for \(cost) mana gives you good raw stats for the cost."
+            } else {
+                lead = "I'd take \(card.name) on its estimated standalone value here, rather than for a specific deck combo."
+            }
+        }
+        if let caution = cautions.max(by: { $0.priority < $1.priority }) {
+            return lead + " " + caution.text
+        }
+        return lead
     }
 
     private static func heuristic(_ card: ArenaCard) -> Double {

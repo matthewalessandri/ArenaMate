@@ -178,13 +178,10 @@ final class DraftStore: ObservableObject {
         return scored.max { $0.1 < $1.1 }?.0
     }
 
-    /// Keep the spoken recommendation brief and distinguish estimates from
-    /// imported ratings without claiming an unmeasured synergy.
+    /// Explain the same deck needs and synergies used by the scorer.
     var recommendationExplanation: String? {
-        guard let index = recommendedIndex, let detail = score(at: index) else { return nil }
-        return detail.hasExternalRating
-            ? "This is my pick based on your imported ratings and the cards you've drafted."
-            : "This is my pick. It has the highest estimated score for your deck."
+        guard let index = recommendedIndex else { return nil }
+        return score(at: index)?.explanation
     }
 
     func recordPick(_ index: Int, auto: Bool = false) {

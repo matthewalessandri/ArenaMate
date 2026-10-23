@@ -262,3 +262,89 @@ final class DraftTitleRegressionTests: XCTestCase {
         XCTAssertEqual(catalog.byGameId("PRO_001at")?.name, "Murloc")
     }
 }
+
+final class RecommendationExplanationTests: XCTestCase {
+    private func pick(_ card: ArenaCard) -> DraftPick { DraftPick(card: card, score: 50) }
+    private var midgame: [DraftPick] {
+        (0..<5).map { pick(ArenaCard(id: "M\($0)", name: "Minion \($0)", cost: 4, type: "MINION")) }
+    }
+    private func score(_ card: ArenaCard, picks: [DraftPick] = [], ratings: ExternalRatings = ExternalRatings()) -> ScoreDetail {
+        DraftScorer.score(card, picks: picks, ratings: ratings, playerClass: "MAGE")
+    }
+    func testMissingBoardClearExplainsAndChangesScore() {
+        let clear = ArenaCard(id: "C", name: "Flamestrike", cost: 7, type: "SPELL", text: "Deal 5 damage to all enemy minions.")
+        let needed = score(clear, picks: midgame)
+        let covered = score(clear, picks: midgame + [pick(clear)])
+        XCTAssertTrue(needed.explanation.contains("don't have a board clear"))
+        XCTAssertTrue(needed.reasons.contains("First board clear"))
+        XCTAssertGreaterThan(needed.total, covered.total)
+        XCTAssertFalse(covered.explanation.contains("don't have a board clear"))
+    }
+    func testBuffAndSingleTargetRemovalDoNotClaimBoardClear() {
+        for text in ["Give all enemy minions +1 Attack.", "Deal 5 damage to an enemy minion.", "Destroy an enemy minion."] {
+            let result = score(ArenaCard(id: "S", name: "Spell", cost: 3, type: "SPELL", text: text), picks: midgame)
+            XCTAssertFalse(result.explanation.contains("board clear"))
+            XCTAssertFalse(result.reasons.contains("First board clear"))
+        }
+    }
+    func testCurveNeedTracksActualDraft() {
+        let early = ArenaCard(id: "E", name: "Early Minion", cost: 2, type: "MINION", attack: 2, health: 3)
+        XCTAssertTrue(score(early, picks: midgame).explanation.contains("short on early minions"))
+        let filled = (0..<6).map { _ in pick(early) }
+        XCTAssertFalse(score(early, picks: filled).explanation.contains("short on early minions"))
+    }
+    func testTribalPayoffNamesAnActualPartnerAndWarnsWithoutOne() {
+        let partner = ArenaCard(id: "D", name: "Azure Drake", cost: 5, type: "MINION", race: "DRAGON")
+        let payoff = ArenaCard(id: "P", name: "Dragon Rider", cost: 4, type: "MINION", text: "Battlecry: If you're holding a Dragon, gain +2/+2.")
+        let supported = score(payoff, picks: [pick(partner)])
+        XCTAssertTrue(supported.explanation.contains("Azure Drake"))
+        let unsupported = score(payoff)
+        XCTAssertFalse(unsupported.explanation.contains("Azure Drake"))
+        XCTAssertTrue(unsupported.explanation.contains("haven't drafted any Dragon support"))
+        XCTAssertGreaterThan(supported.total, unsupported.total)
+        XCTAssertTrue(score(partner, picks: [pick(payoff)]).explanation.contains("Dragon Rider"))
+    }
+    func testMagneticOnlyNamesADraftedMech() {
+        let card = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], race: "MECH")
+        let partner = ArenaCard(id: "M", name: "Muscle-o-Tron", cost: 3, type: "MINION", race: "MECH")
+        XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("magnetize this onto a Mech like Muscle-o-Tron"))
+        XCTAssertFalse(score(card).explanation.contains("magnetize"))
+    }
+    func testOpponentSpellTriggerDoesNotClaimSynergyWithOwnSpells() {
+        let spell = ArenaCard(id: "S", name: "Spell", type: "SPELL")
+        let picks = Array(repeating: pick(spell), count: 5)
+        let opponentPayoff = ArenaCard(id: "O", name: "Watcher", cost: 4, type: "MINION", text: "Whenever your opponent casts a spell, gain +1 Attack.")
+        XCTAssertFalse(score(opponentPayoff, picks: picks).reasons.contains("Fits existing spells"))
+        XCTAssertFalse(score(opponentPayoff, picks: picks).explanation.contains("help trigger"))
+        let ownPayoff = ArenaCard(id: "P", name: "Spellcaster", cost: 4, type: "MINION", text: "Whenever you cast a spell, gain +1 Attack.")
+        XCTAssertTrue(score(ownPayoff, picks: picks).explanation.contains("drafted 5 spells"))
+    }
+    func testSpellDamageRequiresDamageSpellsRatherThanAnySpells() {
+        let minion = ArenaCard(id: "S", name: "Spell Support", cost: 4, type: "MINION", text: "Spell Damage +1")
+        let draw = ArenaCard(id: "DRAW", name: "Arcane Intellect", type: "SPELL", text: "Draw 2 cards.")
+        XCTAssertFalse(score(minion, picks: Array(repeating: pick(draw), count: 5)).reasons.contains("Spell-damage support"))
+        let damage = ArenaCard(id: "F", name: "Frostbolt", type: "SPELL", text: "Deal 3 damage to a character.")
+        XCTAssertTrue(score(minion, picks: [pick(damage), pick(damage)]).explanation.contains("Frostbolt"))
+    }
+    func testCurrentCatalogRacesAndLegacyMechanicalRaceEnableMechSynergy() throws {
+        let data = Data(#"{"id":"M","name":"Muscle-o-Tron","type":"MINION","races":["MECHANICAL"]}"#.utf8)
+        let partner = try JSONDecoder().decode(ArenaCard.self, from: data)
+        let magnetic = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], races: ["MECHANICAL"])
+        XCTAssertTrue(score(magnetic, picks: [pick(partner)]).explanation.contains("Muscle-o-Tron"))
+        XCTAssertEqual(partner.tribes, ["MECH"])
+        XCTAssertEqual(ArenaCard(id: "L", name: "Legacy Mech", race: "MECHANICAL").tribes, ["MECH"])
+        let dual = ArenaCard(id: "D", name: "Dual tribe", races: ["DRAGON", "BEAST"])
+        XCTAssertEqual(dual.tribes, ["DRAGON", "BEAST"])
+    }
+    func testIntrinsicAbilityAndImportedFallbackDoNotInventDeckNeed() {
+        let rush = ArenaCard(id: "R", name: "Rusher", cost: 4, type: "MINION", mechanics: ["RUSH"])
+        XCTAssertTrue(score(rush).explanation.contains("Rush lets this minion"))
+        XCTAssertFalse(score(rush).explanation.contains("This is my pick"))
+        let plain = ArenaCard(id: "V", name: "Plain Minion", cost: 4, type: "MINION")
+        var ratings = ExternalRatings(); ratings.byId["V"] = 90
+        let rated = score(plain, ratings: ratings)
+        XCTAssertTrue(rated.explanation.contains("imported ratings"))
+        XCTAssertFalse(rated.explanation.contains("estimated standalone"))
+        XCTAssertTrue(score(plain).explanation.contains("Plain Minion"))
+    }
+}

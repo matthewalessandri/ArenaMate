@@ -14,6 +14,7 @@ public struct ArenaCard: Codable, Identifiable, Hashable, Sendable {
     public let attack: Int?
     public let health: Int?
     public let race: String?
+    public let races: [String]?
     public let collectible: Bool?
     public let spellSchool: String?
 
@@ -21,12 +22,24 @@ public struct ArenaCard: Codable, Identifiable, Hashable, Sendable {
                 type: String? = nil, cardClass: String? = nil, classes: [String]? = nil,
                 rarity: String? = nil, mechanics: [String]? = nil, text: String? = nil,
                 attack: Int? = nil, health: Int? = nil, race: String? = nil,
-                collectible: Bool? = nil, spellSchool: String? = nil) {
+                collectible: Bool? = nil, spellSchool: String? = nil, races: [String]? = nil) {
         self.id = id; self.dbfId = dbfId; self.name = name; self.cost = cost
         self.type = type; self.cardClass = cardClass; self.classes = classes
         self.rarity = rarity; self.mechanics = mechanics; self.text = text
-        self.attack = attack; self.health = health; self.race = race
+        self.attack = attack; self.health = health; self.race = race; self.races = races
         self.collectible = collectible; self.spellSchool = spellSchool
+    }
+
+    /// Current catalogs use a races array; older saved drafts use race.
+    /// Hearthstone's internal MECHANICAL identifier is displayed as Mech.
+    public var tribes: Set<String> {
+        let values = (races ?? []) + (race.map { [$0] } ?? [])
+        var result = Set(values.map { $0.uppercased() == "MECHANICAL" ? "MECH" : $0.uppercased() })
+        if result.contains("ALL") {
+            result.formUnion(["DRAGON", "BEAST", "MECH", "ELEMENTAL", "DEMON", "MURLOC", "PIRATE", "UNDEAD", "NAGA", "QUILBOAR", "TOTEM"])
+        }
+        result.remove("INVALID")
+        return result
     }
 
     public var plainText: String {
