@@ -1,0 +1,9 @@
+# Local Xcode / Swift output
+.DerivedData/
+.build/
+dist/
+build.log
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.dmg
