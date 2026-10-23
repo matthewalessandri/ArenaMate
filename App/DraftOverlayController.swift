@@ -91,11 +91,21 @@ struct OverlayView: View {
                             }
                         }
                         .frame(height: 22)
-                        Text(store.choices[i].matched?.name ?? "Waiting for card…")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(store.recommendedIndex == i && hasOffer ? ink : parchment.opacity(store.choices[i].matched == nil ? 0.6 : 1))
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                        HStack(alignment: .top, spacing: 7) {
+                            if store.choices[i].matched == nil && store.isScanning && !needsAttention {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .controlSize(.small)
+                                    .tint(parchment)
+                                    .accessibilityHidden(true)
+                            }
+                            Text(store.choices[i].matched?.name ??
+                                 (store.isScanning && !needsAttention ? "Reading card…" : "Waiting for card…"))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(store.recommendedIndex == i && hasOffer ? ink : parchment.opacity(store.choices[i].matched == nil ? 0.6 : 1))
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
                     }
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
