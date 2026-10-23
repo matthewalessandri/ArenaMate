@@ -204,3 +204,51 @@ final class LegendaryCaptureRegressionTests: XCTestCase {
         XCTAssertNil(OfferRecognition.findOffer(lines: shifted, catalog: CatalogIndex(cards: cards), playerClass: "ALL").names)
     }
 }
+
+final class DraftTitleRegressionTests: XCTestCase {
+    // Card metadata reproduced from HearthSim's card definitions. Buckets and
+    // tokens are real catalog entries, but aren't offered Arena card titles.
+    private var catalog: CatalogIndex {
+        CatalogIndex(cards: [
+            ArenaCard(id: "PVPDR_BucketList_Mechs", name: "Mechs", type: "SPELL", collectible: false),
+            ArenaCard(id: "PRO_001at", name: "Murloc", type: "MINION", collectible: false),
+            ArenaCard(id: "TRLA_Paladin_01", name: "Magnetic", type: "SPELL", collectible: false),
+            ArenaCard(id: "TTN_852e", name: "Noble Minibot", type: "ENCHANTMENT", collectible: false),
+            ArenaCard(id: "YOG_525", name: "Muscle-o-Tron", type: "MINION", collectible: true),
+            ArenaCard(id: "VAC_531", name: "Bayfin Bodybuilder", type: "MINION", collectible: true),
+            ArenaCard(id: "TTN_852", name: "Noble Minibot", type: "MINION", collectible: true)
+        ])
+    }
+    func testTribesAndKeywordsDoNotReplaceCardTitles() {
+        let lines = [
+            RecognizedLine(text: "Muscle-o-Tron", x: 0.19, y: 0.65),
+            RecognizedLine(text: "Bayfin Bodybuilder", x: 0.44, y: 0.65),
+            RecognizedLine(text: "Noble Minibot", x: 0.69, y: 0.65),
+            RecognizedLine(text: "Mechs", x: 0.19, y: 0.46),
+            RecognizedLine(text: "Murloc", x: 0.44, y: 0.46),
+            RecognizedLine(text: "Magnetic", x: 0.69, y: 0.56)
+        ]
+        let offer = OfferRecognition.findOffer(lines: lines, catalog: catalog, playerClass: "ALL")
+        XCTAssertEqual(offer.names, ["Muscle-o-Tron", "Bayfin Bodybuilder", "Noble Minibot"])
+        XCTAssertFalse(offer.matched.contains("Mechs"))
+        XCTAssertFalse(offer.matched.contains("Murloc"))
+        XCTAssertFalse(offer.matched.contains("Magnetic"))
+    }
+    func testMissingTitleIsNotFilledWithKeyword() {
+        let lines = [
+            RecognizedLine(text: "Muscle-o-Tron", x: 0.19, y: 0.65),
+            RecognizedLine(text: "Bayfin Bodybuilder", x: 0.44, y: 0.65),
+            RecognizedLine(text: "Magnetic", x: 0.69, y: 0.56)
+        ]
+        XCTAssertNil(OfferRecognition.findOffer(lines: lines, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testRealCardPreferredOverSameNamedEnchantment() {
+        XCTAssertEqual(catalog.matchOCR("Noble Minibot")?.card.id, "TTN_852")
+        XCTAssertEqual(catalog.find("Noble Minibot")?.card.id, "TTN_852")
+        XCTAssertNil(catalog.matchOCR("Mechs"))
+        XCTAssertNil(catalog.matchOCR("Murloc"))
+        XCTAssertNil(catalog.matchOCR("Magnetic"))
+        // Manual ID lookup still supports noncollectible entries.
+        XCTAssertEqual(catalog.byGameId("PRO_001at")?.name, "Murloc")
+    }
+}

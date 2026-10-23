@@ -68,12 +68,8 @@ public enum OfferRecognition {
                     abs($0.x - title.x) < min(leftGap, rightGap) * 0.3 &&
                     $0.y < title.y - 0.03 && $0.y > title.y - 0.16
                 }.map { CatalogIndex.normalize($0.text) }.filter { $0.count >= 18 }
-                let candidates = Set(catalog.cards.filter { card in
-                    let text = CatalogIndex.normalize(card.plainText)
-                    return Set(body.filter { text.contains($0) }).count >= 2
-                }.map { $0.name })
-                guard candidates.count == 1, let name = candidates.first else { break }
-                names.append(name)
+                guard let card = catalog.matchRulesEvidence(body) else { break }
+                names.append(card.name)
             }
             if names.count == 3, Set(names).count == 3 {
                 return OfferRecognitionResult(names: names, matched: names,
@@ -122,7 +118,7 @@ public enum OfferRecognition {
                         return total + 2 * item.match.confidence + item.line.confidence
                             - 2.5 * abs(item.line.x - slotCenters[i])
                     }
-                    let score = quality - 8 * spread
+                    let score = quality - 8 * spread + 4 * ys.reduce(0, +)
                     if best == nil || score > best!.score {
                         best = (score, names)
                     }

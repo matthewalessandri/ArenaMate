@@ -62,10 +62,6 @@ struct OverlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image("InnkeeperPortrait")
-                    .resizable().scaledToFill()
-                    .frame(width: 24, height: 24).clipShape(Circle())
-                    .overlay(Circle().stroke(brass, lineWidth: 1.5))
                 Text("ARENAMATE")
                     .font(.system(size: 14, weight: .heavy, design: .serif))
                     .tracking(1.1).foregroundStyle(parchment)
@@ -94,6 +90,7 @@ struct OverlayView: View {
                                     .monospacedDigit()
                             }
                         }
+                        .frame(height: 22)
                         Text(store.choices[i].matched?.name ?? "Waiting for card…")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(store.recommendedIndex == i && hasOffer ? ink : parchment.opacity(store.choices[i].matched == nil ? 0.6 : 1))

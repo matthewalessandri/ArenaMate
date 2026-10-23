@@ -45,22 +45,36 @@ public struct CatalogIndex: Sendable {
     private let byName: [String: [ArenaCard]]
     private let byId: [String: ArenaCard]
     private let byDbf: [Int: ArenaCard]
-    private let byOCRPrefix: [String: [ArenaCard]]
+    private let byOCRName: [String: [ArenaCard]]
+    private let byOCRPrefix: [String: [(card: ArenaCard, name: String)]]
+    private let rules: [(card: ArenaCard, text: String)]
 
     public init(cards: [ArenaCard]) {
         self.cards = cards
         var names: [String: [ArenaCard]] = [:]
         var ids: [String: ArenaCard] = [:]
         var dbfs: [Int: ArenaCard] = [:]
-        var prefixes: [String: [ArenaCard]] = [:]
+        var ocrNames: [String: [ArenaCard]] = [:]
+        var prefixes: [String: [(card: ArenaCard, name: String)]] = [:]
+        var rules: [(card: ArenaCard, text: String)] = []
         for card in cards {
             let normalized = Self.normalize(card.name)
             names[normalized, default: []].append(card)
-            if normalized.count >= 3 { prefixes[String(normalized.prefix(2)), default: []].append(card) }
+            // Production card data marks collectible cards explicitly. Retain
+            // metadata-free catalogs used by imported fixtures, but exclude
+            // adventure buckets, enchantments and tokens from screen matching.
+            if card.collectible == true || (card.collectible == nil && card.type == nil) {
+                ocrNames[normalized, default: []].append(card)
+                if normalized.count >= 3 {
+                    prefixes[String(normalized.prefix(2)), default: []].append((card, normalized))
+                }
+                if card.text != nil { rules.append((card, Self.normalize(card.plainText))) }
+            }
             ids[card.id.uppercased()] = card
             if let id = card.dbfId { dbfs[id] = card }
         }
-        byName = names; byId = ids; byDbf = dbfs; byOCRPrefix = prefixes
+        byName = names; byId = ids; byDbf = dbfs
+        byOCRName = ocrNames; byOCRPrefix = prefixes; self.rules = rules
     }
 
     public func byGameId(_ id: String) -> ArenaCard? {
@@ -96,17 +110,16 @@ public struct CatalogIndex: Sendable {
         // Screen text is a card name, never a game ID or numeric DBF ID.
         // Otherwise mana/health digits can become unrelated cards (e.g. Mind Control).
         let name = Self.normalize(query)
-        if let matches = byName[name], let exact = choose(matches, playerClass: playerClass) {
+        if let matches = byOCRName[name], let exact = choose(matches, playerClass: playerClass) {
             return MatchResult(card: exact, confidence: 1)
         }
-        let q = Self.normalize(query)
+        let q = name
         guard q.count >= 4, q.count <= 42 else { return nil }
         let pool = byOCRPrefix[String(q.prefix(2))] ?? []
         let cls = playerClass?.uppercased() ?? "ALL"
         var best: ArenaCard?
         var score = 0.0
-        for card in pool {
-            let n = Self.normalize(card.name)
+        for (card, n) in pool {
             guard abs(n.count - q.count) <= 4 else { continue }
             guard cls == "ALL" || isUsable(card, by: cls) else { continue }
             let similarity = 1 - Double(Self.editDistance(q, n)) / Double(max(q.count, n.count))
@@ -116,9 +129,23 @@ public struct CatalogIndex: Sendable {
         return nil
     }
 
+    /// Only unique rules evidence can recover a damaged title. Normalize card
+    /// text once at catalog load, rather than thousands of times per scan.
+    public func matchRulesEvidence(_ fragments: [String]) -> ArenaCard? {
+        let fragments = Set(fragments.map(Self.normalize).filter { $0.count >= 18 })
+        guard fragments.count >= 2 else { return nil }
+        var matches: [String: ArenaCard] = [:]
+        for (card, text) in rules where fragments.filter({ text.contains($0) }).count >= 2 {
+            matches[card.name] = card
+            if matches.count > 1 { return nil }
+        }
+        return matches.values.first
+    }
+
     private func choose(_ cards: [ArenaCard], playerClass: String?) -> ArenaCard? {
         let cls = playerClass?.uppercased() ?? "ALL"
-        return cards.first(where: { isUsable($0, by: cls) }) ?? cards.first
+        return cards.first(where: { $0.collectible == true && isUsable($0, by: cls) })
+            ?? cards.first(where: { isUsable($0, by: cls) }) ?? cards.first
     }
 
     private func isUsable(_ card: ArenaCard, by cls: String) -> Bool {

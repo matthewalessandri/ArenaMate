@@ -58,7 +58,10 @@ enum GameScreenOCR {
         config.showsCursor = false
         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         lastImage = image
-        let result = try recognize(image: image, catalog: catalog, playerClass: "ALL")
+        // Vision and catalog matching are CPU work; keep them off the UI actor.
+        let result = try await Task.detached(priority: .userInitiated) {
+            try recognize(image: image, catalog: catalog, playerClass: "ALL")
+        }.value
         let detectedClass = HeroClassRecognition.detect(lines: result.lines, offeredNames: result.names, catalog: catalog)
         let report = Capture(names: result.names, detectedClass: detectedClass, message: result.message,
                              windowName: "\(game.owningApplication?.applicationName ?? "Hearthstone") · \(config.width)x\(config.height)",
@@ -82,7 +85,7 @@ enum GameScreenOCR {
         return report
     }
 
-    private static func recognize(image: CGImage, catalog: CatalogIndex, playerClass: String)
+    nonisolated private static func recognize(image: CGImage, catalog: CatalogIndex, playerClass: String)
         throws -> (names: [String]?, message: String, lines: [RecognizedLine], matchedNames: [String]) {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
