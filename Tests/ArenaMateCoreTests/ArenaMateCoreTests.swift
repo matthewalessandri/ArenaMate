@@ -310,6 +310,15 @@ final class RecommendationExplanationTests: XCTestCase {
         XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("magnetize this onto a Mech like Muscle-o-Tron"))
         XCTAssertFalse(score(card).explanation.contains("magnetize"))
     }
+    func testOpponentSpellTriggerDoesNotClaimSynergyWithOwnSpells() {
+        let spell = ArenaCard(id: "S", name: "Spell", type: "SPELL")
+        let picks = Array(repeating: pick(spell), count: 5)
+        let opponentPayoff = ArenaCard(id: "O", name: "Watcher", cost: 4, type: "MINION", text: "Whenever your opponent casts a spell, gain +1 Attack.")
+        XCTAssertFalse(score(opponentPayoff, picks: picks).reasons.contains("Fits existing spells"))
+        XCTAssertFalse(score(opponentPayoff, picks: picks).explanation.contains("help trigger"))
+        let ownPayoff = ArenaCard(id: "P", name: "Spellcaster", cost: 4, type: "MINION", text: "Whenever you cast a spell, gain +1 Attack.")
+        XCTAssertTrue(score(ownPayoff, picks: picks).explanation.contains("drafted 5 spells"))
+    }
     func testSpellDamageRequiresDamageSpellsRatherThanAnySpells() {
         let minion = ArenaCard(id: "S", name: "Spell Support", cost: 4, type: "MINION", text: "Spell Damage +1")
         let draw = ArenaCard(id: "DRAW", name: "Arcane Intellect", type: "SPELL", text: "Draw 2 cards.")

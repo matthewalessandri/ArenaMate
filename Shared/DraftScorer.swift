@@ -122,7 +122,7 @@ public enum DraftScorer {
             diff += 2; reasons.append("Spell-damage support")
             insights.append((4, "Spell Damage helps the damage spells you've drafted, including \(partner.card.name)."))
         }
-        if text.contains("spell") && (text.contains("whenever") || text.contains("after you cast")) {
+        if text.contains("spell") && (text.contains("whenever you cast") || text.contains("after you cast")) {
             if spellCount >= 5 {
                 diff += 3; reasons.append("Fits existing spells")
                 insights.append((3, "You've already drafted \(spellCount) spells to help trigger this card's spell payoff."))
