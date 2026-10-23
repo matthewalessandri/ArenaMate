@@ -11,7 +11,7 @@ if [[ ! -x "$appcast_tool" || "$appcast_tool" == *$'\n'* ]]; then
   echo 'Expected exactly one generate_appcast tool from the pinned Sparkle package.' >&2
   exit 1
 fi
-printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" | "$appcast_tool" \
+printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]' | "$appcast_tool" \
   --ed-key-file - --maximum-deltas 0 \
   --download-url-prefix "$DOWNLOAD_PREFIX" -o dist/appcast.xml dist/updates
 signature=$(python3 Scripts/validate_appcast.py dist/appcast.xml dist/updates/ArenaMate-update.zip \
@@ -19,4 +19,4 @@ signature=$(python3 Scripts/validate_appcast.py dist/appcast.xml dist/updates/Ar
 xcrun swift Scripts/verify-update.swift "$SPARKLE_PUBLIC_ED_KEY" "$signature" dist/updates/ArenaMate-update.zip
 # Verify the feed signature too; this does not modify the signed file.
 sign_tool="$(dirname "$appcast_tool")/sign_update"
-printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" | "$sign_tool" --ed-key-file - --verify dist/appcast.xml
+printf '%s\n' "$SPARKLE_PRIVATE_ED_KEY" | tr -d '[:space:]' | "$sign_tool" --ed-key-file - --verify dist/appcast.xml

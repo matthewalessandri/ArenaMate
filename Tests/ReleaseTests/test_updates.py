@@ -24,6 +24,10 @@ class ReleaseValidationTests(unittest.TestCase):
                 self.assertNotIn(key, str(error.exception))
         validate_key(base64.b64encode(bytes(32)).decode(), {32}, "Public key")
 
+    def test_exported_key_with_clipboard_whitespace_is_accepted(self):
+        key = base64.b64encode(bytes(32)).decode()
+        validate_key("\n " + key[:20] + "\r\n" + key[20:] + " \n", {32}, "Signing key")
+
     def check_feed(self, *, signature=None, version="42", url=None, length="7", items=1):
         signature = signature if signature is not None else base64.b64encode(bytes(64)).decode()
         url = url if url is not None else "https://github.com/example/app/releases/download/v1.0.0/ArenaMate-update.zip"
