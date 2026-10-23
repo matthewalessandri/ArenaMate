@@ -31,7 +31,7 @@ public enum OfferRecognition {
     /// The slot bounds are deliberately conservative: if any card is unreadable,
     /// return no recommendation rather than mapping a fourth card to the wrong pick.
     private static let slotRanges: [ClosedRange<Double>] = [
-        0.075...0.315, 0.325...0.555, 0.565...0.795
+        0.075...0.315, 0.325...0.555, 0.565...0.735
     ]
     private static let slotCenters: [Double] = [0.195, 0.440, 0.680]
     private static let titleBand: ClosedRange<Double> = 0.43...0.82
@@ -41,7 +41,7 @@ public enum OfferRecognition {
     /// may recover a damaged title using unique rules text beneath that card.
     private static func alignedOffer(lines: [RecognizedLine], catalog: CatalogIndex,
                                      allowRulesRecovery: Bool) -> OfferRecognitionResult? {
-        let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.795 }
+        let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.735 }
             .sorted { $0.y > $1.y }
         for anchor in titles {
             guard catalog.matchOCR(anchor.text) != nil else { continue }
@@ -52,31 +52,45 @@ public enum OfferRecognition {
                     groups[groups.count - 1].append(line)
                 } else { groups.append([line]) }
             }
-            guard groups.count == 3 else { continue }
-            let xs = groups.map { $0[0].x }
-            let leftGap = xs[1] - xs[0], rightGap = xs[2] - xs[1]
-            guard leftGap >= 0.12, leftGap <= 0.28,
-                  rightGap >= 0.12, rightGap <= 0.28,
-                  abs(leftGap - rightGap) < 0.045 else { continue }
-            var names: [String] = []
-            for group in groups {
-                let matches = group.compactMap { catalog.matchOCR($0.text) }
-                if let match = matches.max(by: { $0.confidence < $1.confidence }) {
-                    names.append(match.card.name)
-                    continue
+            guard groups.count >= 3 else { continue }
+            // A deck-list title can share the draft-title row. Consider the
+            // consecutive board triplets rather than requiring exactly three
+            // text groups or allowing a sidebar to fill a missing board slot.
+            for offset in 0...(groups.count - 3) {
+                let candidateGroups = Array(groups[offset..<(offset + 3)])
+                let xs = candidateGroups.map { $0[0].x }
+                let leftGap = xs[1] - xs[0], rightGap = xs[2] - xs[1]
+                // The first displayed card must still be in the left board
+                // column; never shift middle/right/sidebar text into slots 1–3.
+                guard slotRanges[0].contains(xs[0]) else { continue }
+                guard leftGap >= 0.12, leftGap <= 0.28,
+                      rightGap >= 0.12, rightGap <= 0.28,
+                      abs(leftGap - rightGap) < 0.045 else { continue }
+                var names: [String] = []
+                for group in candidateGroups {
+                    let matches = group.compactMap { line -> (score: Double, match: MatchResult)? in
+                        guard let match = catalog.matchOCR(line.text) else { return nil }
+                        return (2 * match.confidence + line.confidence, match)
+                    }
+                    // An exact catalog match from a weak OCR alternative must
+                    // not outrank a strong reading with a small spelling error.
+                    if let best = matches.max(by: { $0.score < $1.score }) {
+                        names.append(best.match.card.name)
+                        continue
+                    }
+                    guard allowRulesRecovery else { break }
+                    let title = group[0]
+                    let body = lines.filter {
+                        abs($0.x - title.x) < min(leftGap, rightGap) * 0.3 &&
+                        $0.y < title.y - 0.03 && $0.y > title.y - 0.16
+                    }.map { CatalogIndex.normalize($0.text) }.filter { $0.count >= 18 }
+                    guard let card = catalog.matchRulesEvidence(body) else { break }
+                    names.append(card.name)
                 }
-                guard allowRulesRecovery else { break }
-                let title = group[0]
-                let body = lines.filter {
-                    abs($0.x - title.x) < min(leftGap, rightGap) * 0.3 &&
-                    $0.y < title.y - 0.03 && $0.y > title.y - 0.16
-                }.map { CatalogIndex.normalize($0.text) }.filter { $0.count >= 18 }
-                guard let card = catalog.matchRulesEvidence(body) else { break }
-                names.append(card.name)
-            }
-            if names.count == 3, Set(names).count == 3 {
-                return OfferRecognitionResult(names: names, matched: names,
-                    message: "Recognized aligned draft titles: " + names.joined(separator: " | "))
+                if names.count == 3, Set(names).count == 3 {
+                    return OfferRecognitionResult(names: names, matched: names,
+                        message: "Recognized aligned draft titles: " + names.joined(separator: " | "))
+                }
             }
         }
         return nil
@@ -111,6 +125,10 @@ public enum OfferRecognition {
             for b in slots[1].prefix(12) {
                 for c in slots[2].prefix(12) {
                     let candidates = [a, b, c]
+                    let leftGap = b.line.x - a.line.x
+                    let rightGap = c.line.x - b.line.x
+                    guard (0.12...0.28).contains(leftGap), (0.12...0.28).contains(rightGap),
+                          abs(leftGap - rightGap) < 0.045 else { continue }
                     let ys = candidates.map { $0.line.y }
                     let spread = (ys.max() ?? 0) - (ys.min() ?? 0)
                     guard spread <= 0.12 else { continue }

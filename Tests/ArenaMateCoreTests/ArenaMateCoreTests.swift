@@ -307,7 +307,7 @@ final class RecommendationExplanationTests: XCTestCase {
     func testMagneticOnlyNamesADraftedMech() {
         let card = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], race: "MECH")
         let partner = ArenaCard(id: "M", name: "Muscle-o-Tron", cost: 3, type: "MINION", race: "MECH")
-        XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("magnetize this onto a Mech like Muscle-o-Tron"))
+        XCTAssertTrue(score(card, picks: [pick(partner)]).explanation.contains("Mechs you've already drafted, including Muscle-o-Tron"))
         XCTAssertFalse(score(card).explanation.contains("magnetize"))
     }
     func testOpponentSpellTriggerDoesNotClaimSynergyWithOwnSpells() {
@@ -336,15 +336,66 @@ final class RecommendationExplanationTests: XCTestCase {
         let dual = ArenaCard(id: "D", name: "Dual tribe", races: ["DRAGON", "BEAST"])
         XCTAssertEqual(dual.tribes, ["DRAGON", "BEAST"])
     }
-    func testIntrinsicAbilityAndImportedFallbackDoNotInventDeckNeed() {
-        let rush = ArenaCard(id: "R", name: "Rusher", cost: 4, type: "MINION", mechanics: ["RUSH"])
-        XCTAssertTrue(score(rush).explanation.contains("Rush lets this minion"))
-        XCTAssertFalse(score(rush).explanation.contains("This is my pick"))
+    func testFallbackDoesNotTeachKeywordsOrInventDeckNeed() {
+        for mechanic in ["RUSH", "TAUNT", "LIFESTEAL", "DIVINE_SHIELD", "CHARGE"] {
+            let card = ArenaCard(id: "R", name: "Strong Minion", cost: 4, type: "MINION", mechanics: [mechanic])
+            let explanation = score(card).explanation
+            XCTAssertTrue(explanation.contains("Strong Minion"))
+            XCTAssertTrue(explanation.contains("standalone value"))
+            XCTAssertFalse(explanation.lowercased().contains(mechanic.lowercased()))
+        }
         let plain = ArenaCard(id: "V", name: "Plain Minion", cost: 4, type: "MINION")
         var ratings = ExternalRatings(); ratings.byId["V"] = 90
         let rated = score(plain, ratings: ratings)
         XCTAssertTrue(rated.explanation.contains("imported ratings"))
         XCTAssertFalse(rated.explanation.contains("estimated standalone"))
         XCTAssertTrue(score(plain).explanation.contains("Plain Minion"))
+    }
+}
+
+final class SidebarTitleRegressionTests: XCTestCase {
+    private let names = ["Deputization Aura", "Carry-On Grub", "Cult Neophyte", "Hand of Infinity"]
+    private var catalog: CatalogIndex {
+        CatalogIndex(cards: names.enumerated().map { ArenaCard(id: String($0.offset), name: $0.element, collectible: true) })
+    }
+    private var lines: [RecognizedLine] {
+        [RecognizedLine(text: names[0], x: 0.247, y: 0.610),
+         RecognizedLine(text: names[1], x: 0.408, y: 0.611),
+         RecognizedLine(text: names[2], x: 0.558, y: 0.609),
+         RecognizedLine(text: names[3], x: 0.767, y: 0.610)]
+    }
+    func testFourthSidebarTitleCannotReplaceCultNeophyte() {
+        XCTAssertEqual(OfferRecognition.findOffer(lines: lines, catalog: catalog, playerClass: "ALL").names,
+                       Array(names.prefix(3)))
+    }
+    func testWeakAlternativeDoesNotBeatStrongCultNeophyteReading() {
+        var observations = Array(lines.prefix(3))
+        observations[2].text = "Cult Neophyle"
+        observations[2].confidence = 0.98
+        observations.append(RecognizedLine(text: "Hand of Infinity", x: 0.558, y: 0.609, confidence: 0.2))
+        XCTAssertEqual(OfferRecognition.findOffer(lines: observations, catalog: catalog, playerClass: "ALL").names,
+                       Array(names.prefix(3)))
+    }
+    func testEvenlySpacedMiddleRightAndSidebarCannotShiftIntoThreeSlots() {
+        let shifted = [RecognizedLine(text: names[1], x: 0.408, y: 0.61),
+                       RecognizedLine(text: names[2], x: 0.558, y: 0.61),
+                       RecognizedLine(text: names[3], x: 0.708, y: 0.61)]
+        XCTAssertNil(OfferRecognition.findOffer(lines: shifted, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testSidebarTitleIsExcludedEvenWhenEvenlySpacedWithTwoBoardTitles() {
+        let outsideBoard = [RecognizedLine(text: names[0], x: 0.27, y: 0.61),
+                            RecognizedLine(text: names[1], x: 0.51, y: 0.61),
+                            RecognizedLine(text: names[3], x: 0.75, y: 0.61)]
+        XCTAssertNil(OfferRecognition.findOffer(lines: outsideBoard, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testSidebarCannotReplaceUnreadableThirdTitle() {
+        var missing = lines
+        missing.remove(at: 2)
+        XCTAssertNil(OfferRecognition.findOffer(lines: missing, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testSidebarCannotReplaceUnreadableMiddleTitle() {
+        var missing = lines
+        missing.remove(at: 1)
+        XCTAssertNil(OfferRecognition.findOffer(lines: missing, catalog: catalog, playerClass: "ALL").names)
     }
 }
