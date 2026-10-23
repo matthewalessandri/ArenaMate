@@ -317,6 +317,16 @@ final class RecommendationExplanationTests: XCTestCase {
         let damage = ArenaCard(id: "F", name: "Frostbolt", type: "SPELL", text: "Deal 3 damage to a character.")
         XCTAssertTrue(score(minion, picks: [pick(damage), pick(damage)]).explanation.contains("Frostbolt"))
     }
+    func testCurrentCatalogRacesAndLegacyMechanicalRaceEnableMechSynergy() throws {
+        let data = Data(#"{"id":"M","name":"Muscle-o-Tron","type":"MINION","races":["MECHANICAL"]}"#.utf8)
+        let partner = try JSONDecoder().decode(ArenaCard.self, from: data)
+        let magnetic = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], races: ["MECHANICAL"])
+        XCTAssertTrue(score(magnetic, picks: [pick(partner)]).explanation.contains("Muscle-o-Tron"))
+        XCTAssertEqual(partner.tribes, ["MECH"])
+        XCTAssertEqual(ArenaCard(id: "L", name: "Legacy Mech", race: "MECHANICAL").tribes, ["MECH"])
+        let dual = ArenaCard(id: "D", name: "Dual tribe", races: ["DRAGON", "BEAST"])
+        XCTAssertEqual(dual.tribes, ["DRAGON", "BEAST"])
+    }
     func testIntrinsicAbilityAndImportedFallbackDoNotInventDeckNeed() {
         let rush = ArenaCard(id: "R", name: "Rusher", cost: 4, type: "MINION", mechanics: ["RUSH"])
         XCTAssertTrue(score(rush).explanation.contains("Rush lets this minion"))

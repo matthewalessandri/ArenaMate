@@ -132,16 +132,16 @@ public enum DraftScorer {
                 cautions.append((3, "You'll want more spells to get consistent value from its payoff."))
             }
         }
-        let race = (card.race ?? "").uppercased()
-        if race != "", race != "INVALID" {
-            let matched = minions.filter { $0.race?.uppercased() == race }.count
-            if matched >= 3 { diff += 2; reasons.append("\(race.capitalized) density") }
+        let cardTribes = card.tribes
+        for tribe in cardTribes.sorted() {
+            let matched = minions.filter { $0.tribes.contains(tribe) }.count
+            if matched >= 3 { diff += 2; reasons.append("\(tribe.capitalized) density") }
         }
         // A card that demands a tribe can be a liability with no enablers.
         let tribes = ["dragon", "beast", "mech", "elemental", "demon", "murloc", "pirate", "undead"]
         for tribe in tribes {
             if supportsTribe(text, tribe: tribe) {
-                let enablers = minions.filter { $0.race?.lowercased() == tribe }
+                let enablers = minions.filter { $0.tribes.contains(tribe.uppercased()) }
                 if let partner = enablers.first {
                     diff += 3; reasons.append("Supported \(tribe) payoff")
                     insights.append((5, "This has \(tribe.capitalized) support already in your deck, including \(partner.name), to help its payoff work."))
@@ -150,7 +150,7 @@ public enum DraftScorer {
                     cautions.append((6, "You haven't drafted any \(tribe.capitalized) support yet, so its payoff still needs help."))
                 }
             }
-            if race.lowercased() == tribe,
+            if cardTribes.contains(tribe.uppercased()),
                let partner = picks.first(where: { supportsTribe($0.card.plainText.lowercased(), tribe: tribe) }) {
                 diff += 3; reasons.append("Enables drafted \(tribe) payoff")
                 insights.append((5, "This gives \(partner.card.name) another \(tribe.capitalized) to work with."))
@@ -162,7 +162,7 @@ public enum DraftScorer {
         }
         let mechanics = Set((card.mechanics ?? []).map { $0.uppercased() })
         if mechanics.contains("MAGNETIC") || text.contains("magnetic"),
-           let partner = minions.first(where: { $0.race?.uppercased() == "MECH" }) {
+           let partner = minions.first(where: { $0.tribes.contains("MECH") }) {
             diff += 3; reasons.append("Magnetic target drafted")
             insights.append((5, "You can magnetize this onto a Mech like \(partner.name) when it's on your board."))
         }
