@@ -27,9 +27,12 @@ jobs:
                       raise SystemExit('Unsafe ZIP path: '+p)
               z.extractall('.')
           PY
+          # The actions token cannot introduce new workflow files. Add that separately.
+          rm -f .github/workflows/mac-build.yml
           # Browser-uploaded duplicates, not part of the project.
           git ls-files '*.swift' 'arena.example.log' 'ratings.example.csv' | while read -r file; do
             case "$file" in
+              Package.swift) ;; 
               *.swift|arena.example.log|ratings.example.csv) git rm -f -- "$file" ;;
             esac
           done
