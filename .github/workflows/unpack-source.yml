@@ -1,0 +1,43 @@
+name: Arrange ArenaMate source
+on:
+  push:
+    paths:
+      - '.github/workflows/unpack-source.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Unpack project ZIP into correct source folders
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ArenaMate-GitHub-Starter.zip
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('ArenaMate-GitHub-Starter.zip') as z:
+              for item in z.infolist():
+                  p=item.filename
+                  if p.startswith('/') or '..' in p.split('/'):
+                      raise SystemExit('Unsafe ZIP path: '+p)
+              z.extractall('.')
+          PY
+          # Browser-uploaded duplicates, not part of the project.
+          git ls-files '*.swift' 'arena.example.log' 'ratings.example.csv' | while read -r file; do
+            case "$file" in
+              *.swift|arena.example.log|ratings.example.csv) git rm -f -- "$file" ;;
+            esac
+          done
+          git rm -f -- ArenaMate-GitHub-Starter.zip ArenaMate.xcodeproj.zip
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git diff --cached --quiet; then
+            git commit -m 'Restore structured ArenaMate Xcode project'
+            git push
+          fi
