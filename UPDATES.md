@@ -7,10 +7,16 @@ The app trusts an Ed25519 public key embedded at build time. Both the feed and u
 The feed URL is:
 
 ```
-https://github.com/matthewalessandri/ArenaMate/releases/latest/download/appcast.xml
+https://github.com/matthewalessandri/ArenaMate-releases/releases/latest/download/appcast.xml
 ```
 
-The repository and stable release assets must be publicly downloadable: Sparkle does not use your GitHub login. Prereleases are not published to this stable update channel.
+The application source stays in the private `matthewalessandri/ArenaMate` repository. Only compiled app downloads and the signed feed are published to the separate public `matthewalessandri/ArenaMate-releases` repository. Sparkle does not use your GitHub login. Prereleases are not published to this stable update channel.
+
+## One-time public download repository setup
+
+Create **matthewalessandri/ArenaMate-releases** as a **public** repository with a README and default branch `main`. Do not copy the private source repository into it.
+
+Create a fine-grained GitHub token scoped only to `ArenaMate-releases` with **Contents: Read and write** permission. Store it as the private source repository's Actions secret **ARENAMATE_RELEASES_TOKEN**. The source workflow's built-in `GITHUB_TOKEN` cannot publish to a different repository. Set an expiration you can maintain and renew the secret before expiry. Never include this publishing token in the app.
 
 ## One-time signing setup on a Mac
 
@@ -51,8 +57,8 @@ Do not change the public key after distributing the first updater-enabled build 
 
 1. Merge the updater changes and card-recognition fix. Verify the macOS workflow's core tests and universal Xcode build pass.
 2. Publish a stable GitHub Release from the intended commit with a tag such as `v4.6.2`. Tags must be three numeric components, with an optional `v`. Do not reuse release tags. The workflow run number supplies an increasing `CFBundleVersion`; the tag supplies the displayed version. Keep the workflow's run counter intact when changing release automation.
-3. The workflow checks key metadata, builds arm64 and x86_64, verifies app code signatures and architectures, packages the app, and generates a signed feed and archive. It independently checks the archive signature against the public key using CryptoKit and verifies the feed signature before uploading anything. It uploads the feed last. Missing or mismatched keys fail publication. Asset names are never overwritten automatically; a partially uploaded failed release requires inspecting its assets before retrying.
-4. Wait for success and confirm `ArenaMate.dmg`, `ArenaMate-update.zip`, and `appcast.xml` are attached to the release. Publishing a release alone does not mean its build or upload succeeded. GitHub's latest stable release must point to this version for automatic checks to find it. A new release can briefly return a missing feed while CI is still running.
+3. The workflow checks signing and publishing requirements, builds arm64 and x86_64, verifies app code signatures and architectures, packages the app, and generates a signed feed and archive. It independently checks the archive signature against the public key using CryptoKit and verifies the feed signature before uploading anything. It creates a draft release in the public downloads repository, uploads every asset, then publishes it as the latest release. Missing or mismatched keys fail publication. Existing release tags and assets are never overwritten automatically; inspect and remove an incomplete draft before retrying. Private source-release notes are not copied into public downloads.
+4. Wait for success and confirm `ArenaMate.dmg`, `ArenaMate-update.zip`, and `appcast.xml` are attached to the corresponding release in the **public downloads repository**. Publishing a release alone does not mean its build or upload succeeded. GitHub's latest stable release must point to this version for automatic checks to find it. A new release can briefly return a missing feed while CI is still running.
 5. Install this updater-enabled app manually once. Older ArenaMate copies cannot discover an updater they do not contain. Keep the app in a writable stable location such as `~/Applications/ArenaMate.app`.
 6. On the Mac, allow automatic checks when Sparkle asks, or use the menu toggle. Later stable releases can then be offered and installed from inside the app.
 

@@ -9,7 +9,7 @@ on:
     types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: mac-build-${{ github.event_name }}-${{ github.ref }}
@@ -22,6 +22,7 @@ jobs:
       SOURCE_PACKAGES: ${{ github.workspace }}/.SourcePackages
       SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
       BUILD_VERSION: ${{ github.run_number }}
+      RELEASES_REPO: matthewalessandri/ArenaMate-releases
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +34,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          ARENAMATE_RELEASES_TOKEN: ${{ secrets.ARENAMATE_RELEASES_TOKEN }}
         run: python3 Scripts/release_metadata.py
       - name: Show Xcode version
         run: xcodebuild -version
@@ -78,7 +80,7 @@ jobs:
         if: github.event_name == 'release' && !github.event.release.prerelease
         env:
           SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
-          DOWNLOAD_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/
+          DOWNLOAD_PREFIX: https://github.com/matthewalessandri/ArenaMate-releases/releases/download/${{ github.event.release.tag_name }}/
         run: bash Scripts/sign-update.sh
       - name: Save downloadable build
         uses: actions/upload-artifact@v4
@@ -90,14 +92,20 @@ jobs:
             dist/ArenaMate.dmg.sha256
             dist/updates/ArenaMate-update.zip
             dist/appcast.xml
-      - name: Attach verified update to stable GitHub Release
+      - name: Publish verified update in public releases repository
         if: github.event_name == 'release' && !github.event.release.prerelease
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.ARENAMATE_RELEASES_TOKEN }}
+          GH_REPO: ${{ env.RELEASES_REPO }}
           TAG: ${{ github.event.release.tag_name }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          # Upload the feed last; never replace an already published version.
-          gh release upload "$TAG" dist/ArenaMate.dmg dist/ArenaMate.dmg.sha256 dist/updates/ArenaMate-update.zip
-          gh release upload "$TAG" dist/appcast.xml
+          # Stage every asset before exposing this version through /latest.
+          # Deliberately omit private source-release notes and source links.
+          gh release create "$TAG" --target main --draft \
+            --title "ArenaMate $RELEASE_VERSION" \
+            --notes "Signed macOS download and automatic update feed."
+          gh release upload "$TAG" dist/ArenaMate.dmg dist/ArenaMate.dmg.sha256 \
+            dist/updates/ArenaMate-update.zip dist/appcast.xml
+          gh release edit "$TAG" --draft=false --latest

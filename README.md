@@ -8,7 +8,7 @@ Native macOS Hearthstone Arena drafting companion. This is the current **v4.6-ba
 - Run `swift test` to exercise the portable recognition and scoring logic.
 - Run `Build-Mac-App.command` for a local `.app` and `.dmg`.
 - GitHub Actions (`.github/workflows/mac-build.yml`) builds and tests on a macOS runner on each push to `main`, and uploads an installable DMG as a workflow artifact.
-- Publishing a stable GitHub Release with a `vMAJOR.MINOR.PATCH` tag builds a universal app and, once signing is configured, attaches the DMG, signed update ZIP, and signed Sparkle feed. See [Automatic updates](UPDATES.md) for one-time setup and verification.
+- Publishing a stable GitHub Release with a `vMAJOR.MINOR.PATCH` tag builds a universal app and, once signing is configured, publishes the DMG, signed update ZIP, and signed Sparkle feed to the separate public `ArenaMate-releases` repository while keeping this source repository private. See [Automatic updates](UPDATES.md) for one-time setup and verification.
 
 **Current release limitations:** The GitHub CI output uses ad-hoc signing and is NOT notarized by Apple. It can prompt Gatekeeper warnings and macOS screen-recording permissions. Sparkle checks for updates with user consent and verifies signed feeds and archives. Release builds require the update signing key described in [UPDATES.md](UPDATES.md). Developer ID signing and notarization remain outstanding; ad-hoc app signing can cause screen-recording permission prompts after replacement. Do not place signing private keys in the repository.
 

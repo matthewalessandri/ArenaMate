@@ -26,6 +26,8 @@ if __name__ == "__main__":
         version = release_version(os.environ["RELEASE_TAG"])
         validate_key(os.environ.get("SPARKLE_PUBLIC_ED_KEY", ""), {32}, "SPARKLE_PUBLIC_ED_KEY repository variable")
         validate_key(os.environ.get("SPARKLE_PRIVATE_ED_KEY", ""), {32, 96}, "SPARKLE_PRIVATE_ED_KEY repository secret")
+        if not os.environ.get("ARENAMATE_RELEASES_TOKEN"):
+            raise ValueError("ARENAMATE_RELEASES_TOKEN repository secret is missing; it grants publication to the separate public releases repository.")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"version={version}\n")
     except (ValueError, KeyError) as error:
