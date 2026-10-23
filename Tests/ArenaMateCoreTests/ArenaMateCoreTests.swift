@@ -352,3 +352,38 @@ final class RecommendationExplanationTests: XCTestCase {
         XCTAssertTrue(score(plain).explanation.contains("Plain Minion"))
     }
 }
+
+final class SidebarTitleRegressionTests: XCTestCase {
+    private let names = ["Deputization Aura", "Carry-On Grub", "Cult Neophyte", "Hand of Infinity"]
+    private var catalog: CatalogIndex {
+        CatalogIndex(cards: names.enumerated().map { ArenaCard(id: String($0.offset), name: $0.element, collectible: true) })
+    }
+    private var lines: [RecognizedLine] {
+        [RecognizedLine(text: names[0], x: 0.247, y: 0.610),
+         RecognizedLine(text: names[1], x: 0.408, y: 0.611),
+         RecognizedLine(text: names[2], x: 0.558, y: 0.609),
+         RecognizedLine(text: names[3], x: 0.767, y: 0.610)]
+    }
+    func testFourthSidebarTitleCannotReplaceCultNeophyte() {
+        XCTAssertEqual(OfferRecognition.findOffer(lines: lines, catalog: catalog, playerClass: "ALL").names,
+                       Array(names.prefix(3)))
+    }
+    func testWeakAlternativeDoesNotBeatStrongCultNeophyteReading() {
+        var observations = Array(lines.prefix(3))
+        observations[2].text = "Cult Neophyle"
+        observations[2].confidence = 0.98
+        observations.append(RecognizedLine(text: "Hand of Infinity", x: 0.558, y: 0.609, confidence: 0.2))
+        XCTAssertEqual(OfferRecognition.findOffer(lines: observations, catalog: catalog, playerClass: "ALL").names,
+                       Array(names.prefix(3)))
+    }
+    func testSidebarCannotReplaceUnreadableThirdTitle() {
+        var missing = lines
+        missing.remove(at: 2)
+        XCTAssertNil(OfferRecognition.findOffer(lines: missing, catalog: catalog, playerClass: "ALL").names)
+    }
+    func testSidebarCannotReplaceUnreadableMiddleTitle() {
+        var missing = lines
+        missing.remove(at: 1)
+        XCTAssertNil(OfferRecognition.findOffer(lines: missing, catalog: catalog, playerClass: "ALL").names)
+    }
+}
