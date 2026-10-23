@@ -93,7 +93,12 @@ public struct CatalogIndex: Sendable {
     /// OCR calls run frequently; avoid scanning tens of thousands of card names
     /// for every word of recognized text. Bias to the same two first letters.
     public func matchOCR(_ query: String, playerClass: String? = nil) -> MatchResult? {
-        if let exact = find(query, playerClass: playerClass, allowFuzzy: false) { return exact }
+        // Screen text is a card name, never a game ID or numeric DBF ID.
+        // Otherwise mana/health digits can become unrelated cards (e.g. Mind Control).
+        let name = Self.normalize(query)
+        if let matches = byName[name], let exact = choose(matches, playerClass: playerClass) {
+            return MatchResult(card: exact, confidence: 1)
+        }
         let q = Self.normalize(query)
         guard q.count >= 4, q.count <= 42 else { return nil }
         let pool = byOCRPrefix[String(q.prefix(2))] ?? []

@@ -3,6 +3,7 @@ name: Build ArenaMate for macOS
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
   release:
     types: [published]
@@ -10,46 +11,93 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: mac-build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-macos:
     runs-on: macos-latest
+    env:
+      SOURCE_PACKAGES: ${{ github.workspace }}/.SourcePackages
+      SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+      BUILD_VERSION: ${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate stable release signing configuration
+        if: github.event_name == 'release' && !github.event.release.prerelease
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: python3 Scripts/release_metadata.py
       - name: Show Xcode version
         run: xcodebuild -version
+      - name: Test release validation
+        run: python3 -m unittest discover -s Tests/ReleaseTests -v
       - name: Test core recognition and scoring
         run: swift test --scratch-path "$RUNNER_TEMP/arenamate-swift-build"
-      - name: Build Mac application
+      - name: Build universal Mac application
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version || '4.6.1' }}
         shell: bash
         run: |
           set -euo pipefail
           xcodebuild -project ArenaMate.xcodeproj -scheme ArenaMate -configuration Release \
             -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES" \
+            -onlyUsePackageVersionsFromResolvedFile \
             -derivedDataPath "$RUNNER_TEMP/ArenaMateDerivedData" \
+            ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
+            MARKETING_VERSION="$RELEASE_VERSION" CURRENT_PROJECT_VERSION="$BUILD_VERSION" \
+            SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
             CODE_SIGNING_ALLOWED=YES 'CODE_SIGN_IDENTITY=-' build
-          test -d "$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app"
-      - name: Package DMG
+          app="$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app"
+          test -d "$app/Contents/Frameworks/Sparkle.framework"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")" = "$SPARKLE_PUBLIC_ED_KEY"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$BUILD_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$app/Contents/Info.plist")" = true
+          codesign --verify --deep --strict "$app"
+          lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/ArenaMate"
+      - name: Package DMG and update archive
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist "$RUNNER_TEMP/ArenaMateDisk"
-          ditto "$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app" \
-            "$RUNNER_TEMP/ArenaMateDisk/ArenaMate.app"
+          app="$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app"
+          mkdir -p dist/updates "$RUNNER_TEMP/ArenaMateDisk"
+          ditto "$app" "$RUNNER_TEMP/ArenaMateDisk/ArenaMate.app"
           ln -s /Applications "$RUNNER_TEMP/ArenaMateDisk/Applications"
           hdiutil create -quiet -volname ArenaMate -srcfolder "$RUNNER_TEMP/ArenaMateDisk" \
             -format UDZO -ov dist/ArenaMate.dmg
           shasum -a 256 dist/ArenaMate.dmg > dist/ArenaMate.dmg.sha256
+          ditto -c -k --sequesterRsrc --keepParent "$app" dist/updates/ArenaMate-update.zip
+      - name: Sign and verify stable update archive and feed
+        if: github.event_name == 'release' && !github.event.release.prerelease
+        env:
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+          DOWNLOAD_PREFIX: https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/
+        run: bash Scripts/sign-update.sh
       - name: Save downloadable build
         uses: actions/upload-artifact@v4
         with:
           name: ArenaMate-macOS
+          if-no-files-found: error
           path: |
             dist/ArenaMate.dmg
             dist/ArenaMate.dmg.sha256
-      - name: Attach DMG to GitHub Release
-        if: github.event_name == 'release'
+            dist/updates/ArenaMate-update.zip
+            dist/appcast.xml
+      - name: Attach verified update to stable GitHub Release
+        if: github.event_name == 'release' && !github.event.release.prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG" dist/ArenaMate.dmg dist/ArenaMate.dmg.sha256 --clobber
+        run: |
+          set -euo pipefail
+          # Upload the feed last; never replace an already published version.
+          gh release upload "$TAG" dist/ArenaMate.dmg dist/ArenaMate.dmg.sha256 dist/updates/ArenaMate-update.zip
+          gh release upload "$TAG" dist/appcast.xml

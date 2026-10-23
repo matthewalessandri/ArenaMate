@@ -12,7 +12,7 @@ On the user's Mac, the app often says `Waiting for card...` despite Hearthstone 
 - Correctly map left/middle/right by card position. Reject false readings from hovered cards or deck lists.
 - Avoid repeated macOS permission requests; keep stable app ID and signing.
 - Validate with Xcode on macOS, and preserve existing custom app icon and Innkeeper art.
-- Later, implement secure app updates with Sparkle or equivalent, ideally GitHub Releases with cryptographically signed updates. Do not imply automatic updates are enabled before that exists.
+- Sparkle integration and signed GitHub Release updates are implemented; follow `UPDATES.md` to configure the release keys and verify a real upgrade on macOS. Do not claim deployed updates work before that verification. Developer ID signing and notarization remain outstanding.
 
 ## Verification
 - `swift test` passes.
