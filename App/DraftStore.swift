@@ -328,11 +328,10 @@ final class DraftStore: ObservableObject {
                         self.updateOffer(names, source: "On-screen OCR")
                     } else {
                         self.stableFrames = 0; self.lastDetected = ""
-                        // Don't keep recommending the previous offer while the
-                        // next one is animating or its names are unreadable.
-                        if self.sourceLabel == "On-screen OCR" {
-                            self.choices = (0..<3).map { OfferedCard(id: $0) }
-                        }
+                        // Hover previews and draft animations can obscure a title.
+                        // Keep the last complete offer until another complete trio
+                        // replaces it. Recording a pick or resetting the draft
+                        // still clears the choices explicitly.
                     }
                 } catch {
                     // Pause on the first failure. Retrying SCShareableContent
