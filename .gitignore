@@ -7,3 +7,5 @@ build.log
 xcuserdata/
 .DS_Store
 *.dmg
+.SourcePackages/
+__pycache__/

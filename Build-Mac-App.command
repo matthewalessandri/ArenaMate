@@ -38,7 +38,9 @@ fi
 
 mkdir -p dist
 xcodebuild -project ArenaMate.xcodeproj -scheme ArenaMate -configuration Release -destination 'platform=macOS' \
-   -derivedDataPath "$(pwd)/.DerivedData" "${SIGN_ARGS[@]}" build > build.log 2>&1 || { tail -n 60 build.log; false; }
+   -clonedSourcePackagesDirPath "$(pwd)/.SourcePackages" -onlyUsePackageVersionsFromResolvedFile \
+   -derivedDataPath "$(pwd)/.DerivedData" \
+   "SPARKLE_PUBLIC_ED_KEY=${SPARKLE_PUBLIC_ED_KEY:-}" "${SIGN_ARGS[@]}" build > build.log 2>&1 || { tail -n 60 build.log; false; }
 APP="$(pwd)/.DerivedData/Build/Products/Release/ArenaMate.app"
 if [[ ! -d "$APP" ]]; then echo 'ArenaMate.app was not created.'; false; fi
 

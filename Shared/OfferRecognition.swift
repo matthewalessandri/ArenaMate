@@ -36,7 +36,58 @@ public enum OfferRecognition {
     private static let slotCenters: [Double] = [0.195, 0.440, 0.680]
     private static let titleBand: ClosedRange<Double> = 0.43...0.82
 
+    /// Legendary groups can occupy a narrower row than regular draft offers.
+    /// Require three aligned title boxes and corroborate unreadable titles with
+    /// unique rules text directly beneath that same card, never a guessed name.
+    private static func legendaryOffer(lines: [RecognizedLine], catalog: CatalogIndex) -> OfferRecognitionResult? {
+        let titles = lines.filter { titleBand.contains($0.y) && $0.x > 0.075 && $0.x < 0.795 }
+        for anchor in titles {
+            guard catalog.matchOCR(anchor.text) != nil else { continue }
+            let row = titles.filter { abs($0.y - anchor.y) < 0.025 }.sorted { $0.x < $1.x }
+            var groups: [[RecognizedLine]] = []
+            for line in row {
+                if let last = groups.last, abs(last[0].x - line.x) < 0.025 {
+                    groups[groups.count - 1].append(line)
+                } else { groups.append([line]) }
+            }
+            guard groups.count == 3 else { continue }
+            let xs = groups.map { $0[0].x }
+            let leftGap = xs[1] - xs[0], rightGap = xs[2] - xs[1]
+            guard leftGap >= 0.12, leftGap <= 0.28,
+                  rightGap >= 0.12, rightGap <= 0.28,
+                  abs(leftGap - rightGap) < 0.045 else { continue }
+            var names: [String] = []
+            for group in groups {
+                let matches = group.compactMap { catalog.matchOCR($0.text) }
+                if let match = matches.max(by: { $0.confidence < $1.confidence }) {
+                    names.append(match.card.name)
+                    continue
+                }
+                let title = group[0]
+                let body = lines.filter {
+                    abs($0.x - title.x) < min(leftGap, rightGap) * 0.3 &&
+                    $0.y < title.y - 0.03 && $0.y > title.y - 0.16
+                }.map { CatalogIndex.normalize($0.text) }.filter { $0.count >= 18 }
+                let candidates = Set(catalog.cards.filter { card in
+                    let text = CatalogIndex.normalize(card.plainText)
+                    return Set(body.filter { text.contains($0) }).count >= 2
+                }.map { $0.name })
+                guard candidates.count == 1, let name = candidates.first else { break }
+                names.append(name)
+            }
+            if names.count == 3, Set(names).count == 3 {
+                return OfferRecognitionResult(names: names, matched: names,
+                    message: "Recognized legendary group: " + names.joined(separator: " | "))
+            }
+        }
+        return nil
+    }
+
     public static func findOffer(lines: [RecognizedLine], catalog: CatalogIndex, playerClass: String) -> OfferRecognitionResult {
+        if lines.contains(where: { CatalogIndex.normalize($0.text).contains("choose a legendary group") }),
+           let legendary = legendaryOffer(lines: lines, catalog: catalog) {
+            return legendary
+        }
         var slots: [[Item]] = [[], [], []]
         for line in lines {
             guard titleBand.contains(line.y),

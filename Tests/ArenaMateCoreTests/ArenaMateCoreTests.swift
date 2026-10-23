@@ -159,3 +159,48 @@ final class HeroClassRecognitionTests: XCTestCase {
     }
 
 }
+
+final class LegendaryCaptureRegressionTests: XCTestCase {
+    private let cards = [
+        ArenaCard(id: "A", name: "Amitut, Keeper of Amitus"),
+        ArenaCard(id: "P", name: "Prison of Yogg-Saron"),
+        ArenaCard(id: "T", name: "Tyr", text: "Battlecry: Resurrect a 2, 3, and 4-Attack minion from your class."),
+        ArenaCard(id: "EX1_334", dbfId: 8, name: "Mind Control")
+    ]
+    private var lines: [RecognizedLine] {
+        [
+            RecognizedLine(text: "Choose a Legendary Group for your deck:", x: 0.404, y: 0.838),
+            RecognizedLine(text: "Amitut, Keeper of Amitus", x: 0.247, y: 0.610),
+            RecognizedLine(text: "Prison of Yogg-Saron", x: 0.408, y: 0.611),
+            RecognizedLine(text: "ТуВ", x: 0.558, y: 0.609, confidence: 0.5),
+            RecognizedLine(text: "Battlecry: Resurrect a", x: 0.562, y: 0.550),
+            RecognizedLine(text: "2, 3, and 4-Attack minion", x: 0.562, y: 0.534),
+            RecognizedLine(text: "from your class.", x: 0.562, y: 0.515),
+            RecognizedLine(text: "8", x: 0.302, y: 0.487)
+        ]
+    }
+    func testReportedNarrowLegendaryLayoutAndUnreadableTyr() {
+        let result = OfferRecognition.findOffer(lines: lines, catalog: CatalogIndex(cards: cards), playerClass: "ALL")
+        XCTAssertEqual(result.names, ["Amitut, Keeper of Amitus", "Prison of Yogg-Saron", "Tyr"])
+        XCTAssertFalse(result.matched.contains("Mind Control"))
+    }
+    func testNumericOCRDoesNotMatchDatabaseID() {
+        let catalog = CatalogIndex(cards: cards)
+        XCTAssertEqual(catalog.find("8")?.card.name, "Mind Control")
+        XCTAssertNil(catalog.matchOCR("8"))
+    }
+    func testUnreadableTitleWithoutRulesEvidenceDoesNotGuess() {
+        let result = OfferRecognition.findOffer(lines: Array(lines.prefix(4)), catalog: CatalogIndex(cards: cards), playerClass: "ALL")
+        XCTAssertNil(result.names)
+    }
+    func testAmbiguousRulesTextDoesNotGuess() {
+        let duplicate = ArenaCard(id: "D", name: "Another resurrection card", text: cards[2].text)
+        let result = OfferRecognition.findOffer(lines: lines, catalog: CatalogIndex(cards: cards + [duplicate]), playerClass: "ALL")
+        XCTAssertNil(result.names)
+    }
+    func testRulesTextFromSidebarDoesNotFillMissingCard() {
+        var shifted = lines
+        for i in 4...6 { shifted[i].x = 0.91 }
+        XCTAssertNil(OfferRecognition.findOffer(lines: shifted, catalog: CatalogIndex(cards: cards), playerClass: "ALL").names)
+    }
+}
