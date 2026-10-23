@@ -1,0 +1,172 @@
+import Foundation
+
+public struct DraftPick: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var card: ArenaCard
+    public var score: Double
+    public var selectedAt: Date
+    public init(card: ArenaCard, score: Double) {
+        self.id = UUID(); self.card = card; self.score = score; self.selectedAt = Date()
+    }
+}
+
+public struct ScoreDetail: Sendable {
+    public let total: Double
+    public let base: Double
+    public let label: String
+    public let reasons: [String]
+    public let hasExternalRating: Bool
+}
+
+public struct ExternalRatings: Sendable {
+    public var byId: [String: Double] = [:]
+    public var byClassAndName: [String: Double] = [:]
+    public var byName: [String: Double] = [:]
+
+    public init() {}
+
+    public func score(card: ArenaCard, playerClass: String) -> Double? {
+        if let value = byId[card.id.uppercased()] { return value }
+        if let value = card.dbfId.flatMap({ byId[String($0)] }) { return value }
+        let name = CatalogIndex.normalize(card.name)
+        let cls = playerClass.uppercased()
+        return byClassAndName["\(cls)|\(name)"] ?? byName[name]
+    }
+
+    public static func parseCSV(_ data: Data) throws -> ExternalRatings {
+        guard let text = String(data: data, encoding: .utf8) else { throw CSVError.encoding }
+        let rows = csvRows(text).filter { !$0.isEmpty && !$0.allSatisfy { $0.isEmpty } }
+        guard let header = rows.first else { throw CSVError.header }
+        let columns = header.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        guard let scoreCol = columns.firstIndex(where: { ["score", "rating", "value"].contains($0) }) else { throw CSVError.header }
+        let nameCol = columns.firstIndex(of: "name") ?? columns.firstIndex(of: "card")
+        let idCol = columns.firstIndex(of: "id") ?? columns.firstIndex(of: "cardid")
+        let clsCol = columns.firstIndex(of: "class") ?? columns.firstIndex(of: "cardclass")
+        guard nameCol != nil || idCol != nil else { throw CSVError.header }
+        var result = ExternalRatings()
+        for row in rows.dropFirst() {
+            guard scoreCol < row.count, let score = Double(row[scoreCol].trimmingCharacters(in: .whitespaces)), score.isFinite, (0...100).contains(score) else { continue }
+            if let idCol, idCol < row.count, !row[idCol].isEmpty { result.byId[row[idCol].uppercased()] = score }
+            if let nameCol, nameCol < row.count, !row[nameCol].isEmpty {
+                let name = CatalogIndex.normalize(row[nameCol])
+                if let clsCol, clsCol < row.count, !row[clsCol].isEmpty {
+                    result.byClassAndName["\(row[clsCol].uppercased())|\(name)"] = score
+                } else { result.byName[name] = score }
+            }
+        }
+        return result
+    }
+
+    public enum CSVError: LocalizedError {
+        case encoding, header
+        public var errorDescription: String? {
+            switch self {
+            case .encoding: return "This CSV is not UTF-8."
+            case .header: return "CSV needs name,score columns (optional class or id)."
+            }
+        }
+    }
+
+    private static func csvRows(_ text: String) -> [[String]] {
+        var rows: [[String]] = [], row: [String] = [], field = "", quoted = false
+        let chars = Array(text.replacingOccurrences(of: "\r\n", with: "\n"))
+        var i = 0
+        while i < chars.count {
+            let ch = chars[i]
+            if ch == "\"" {
+                if quoted && i + 1 < chars.count && chars[i + 1] == "\"" { field.append("\""); i += 1 }
+                else { quoted.toggle() }
+            } else if ch == "," && !quoted { row.append(field); field = "" }
+            else if (ch == "\n" || ch == "\r") && !quoted {
+                row.append(field); rows.append(row); row = []; field = ""
+            } else { field.append(ch) }
+            i += 1
+        }
+        if !row.isEmpty || !field.isEmpty { row.append(field); rows.append(row) }
+        return rows
+    }
+}
+
+public enum DraftScorer {
+    public static func score(_ card: ArenaCard, picks: [DraftPick], ratings: ExternalRatings,
+                             playerClass: String) -> ScoreDetail {
+        let imported = ratings.score(card: card, playerClass: playerClass)
+        let base = imported ?? heuristic(card)
+        var diff = 0.0, reasons: [String] = []
+        let cost = card.cost ?? 0
+        let minions = picks.map(\.card).filter { $0.type == "MINION" }
+        let early = picks.filter { ($0.card.cost ?? 0) <= 2 && $0.card.type == "MINION" }.count
+        let expensive = picks.filter { ($0.card.cost ?? 0) >= 6 }.count
+        let effectiveTarget = max(4, Int(Double(max(1, picks.count)) * 0.26))
+        if card.type == "MINION" && (1...2).contains(cost) && early < effectiveTarget {
+            diff += 3; reasons.append("Helps early-game curve")
+        }
+        if cost >= 6 && expensive >= max(2, picks.count / 7) {
+            diff -= 4; reasons.append("Already heavy at 6+ mana")
+        }
+        let text = card.plainText.lowercased()
+        let allTexts = picks.map { $0.card.plainText.lowercased() }
+        let spellCount = picks.filter { $0.card.type == "SPELL" }.count
+        if text.contains("spell damage") && spellCount >= 4 {
+            diff += 2; reasons.append("Spell-damage support")
+        }
+        if text.contains("spell") && (text.contains("whenever") || text.contains("after you cast")) {
+            if spellCount >= 5 { diff += 3; reasons.append("Fits existing spells") }
+            else if spellCount < 2 { diff -= 3; reasons.append("Few spells for payoff") }
+        }
+        let race = (card.race ?? "").uppercased()
+        if race != "", race != "INVALID" {
+            let matched = minions.filter { $0.race?.uppercased() == race }.count
+            if matched >= 3 { diff += 2; reasons.append("\(race.capitalized) density") }
+        }
+        // A card that demands a tribe can be a liability with no enablers.
+        let tribes = ["dragon", "beast", "mech", "elemental", "demon", "murloc", "pirate", "undead"]
+        for tribe in tribes {
+            if (text.contains("if you're holding a \(tribe)") || text.contains("if you control a \(tribe)") || text.contains("your \(tribe)s")) &&
+                !picks.contains(where: { $0.card.race?.lowercased() == tribe }) {
+                diff -= 6; reasons.append("No \(tribe) support drafted")
+            }
+        }
+        if text.contains("battlecry") && allTexts.filter({ $0.contains("battlecry") }).count >= 5 && text.contains("your battlecries") {
+            diff += 2; reasons.append("Battlecry deck synergy")
+        }
+        let bounded = max(-9, min(9, diff))
+        let total = max(0, min(100, base + bounded))
+        if reasons.isEmpty { reasons.append(imported == nil ? "Estimated from card stats and text" : "Imported base rating") }
+        return ScoreDetail(total: total, base: base,
+                           label: imported == nil ? "Estimate" : "Imported tier rating",
+                           reasons: reasons, hasExternalRating: imported != nil)
+    }
+
+    private static func heuristic(_ card: ArenaCard) -> Double {
+        let cost = Double(max(0, card.cost ?? 0))
+        let text = card.plainText.lowercased()
+        let mechanics = Set((card.mechanics ?? []).map { $0.uppercased() })
+        var val = 48.0
+        if card.type == "MINION" {
+            let stats = Double((card.attack ?? 0) + (card.health ?? 0))
+            let expected = cost * 2 + 1
+            val += max(-15, min(14, (stats - expected) * 3.0))
+            if cost == 2 || cost == 3 { val += 3 }
+            if mechanics.contains("RUSH") { val += 9 }
+            if mechanics.contains("DIVINE_SHIELD") { val += 8 }
+            if mechanics.contains("LIFESTEAL") { val += 4 }
+            if mechanics.contains("TAUNT") { val += 3 }
+            if mechanics.contains("WINDFURY") { val += 2 }
+            if mechanics.contains("STEALTH") { val += 2 }
+            if mechanics.contains("CHARGE") { val += 8 }
+        } else if card.type == "SPELL" {
+            val += 4
+            if text.contains("deal") && text.contains("damage") { val += 10 }
+            if text.contains("all enemy minions") || text.contains("all enemies") { val += 10 }
+            if text.contains("draw") || text.contains("discover") { val += 6 }
+            if text.contains("destroy a minion") || text.contains("destroy an enemy minion") { val += 10 }
+        } else if card.type == "WEAPON" { val += 5 }
+        if text.contains("discover") { val += 5 }
+        if text.contains("draw a card") { val += 4 }
+        if text.contains("deal") && text.contains("damage") && card.type == "MINION" { val += 5 }
+        if text.contains("random") { val -= 2 }
+        if card.type == "MINION" && cost >= 8 { val -= 3 }
+        return max(5, min(95, val))
+    }
+}
