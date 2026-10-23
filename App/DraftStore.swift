@@ -178,19 +178,13 @@ final class DraftStore: ObservableObject {
         return scored.max { $0.1 < $1.1 }?.0
     }
 
-    /// Rationale is grounded in the scoring adjustments actually applied.
-    /// When no synergy was measured, say so rather than inventing one.
+    /// Keep the spoken recommendation brief and distinguish estimates from
+    /// imported ratings without claiming an unmeasured synergy.
     var recommendationExplanation: String? {
-        guard let index = recommendedIndex, let card = choices[index].matched,
-              let detail = score(at: index) else { return nil }
-        let specific = detail.reasons.filter {
-            $0 != "Estimated from card stats and text" && $0 != "Imported base rating"
-        }
-        if let rationale = specific.first {
-            return "Why \(card.name): \(rationale)." +
-                (detail.hasExternalRating ? " Based on imported ratings." : " Based on estimated scores.")
-        }
-        return "Why \(card.name): Highest \(detail.hasExternalRating ? "imported" : "estimated") score of the three; no specific deck synergy identified yet."
+        guard let index = recommendedIndex, let detail = score(at: index) else { return nil }
+        return detail.hasExternalRating
+            ? "This is my pick based on your imported ratings and the cards you've drafted."
+            : "This is my pick. It has the highest estimated score for your deck."
     }
 
     func recordPick(_ index: Int, auto: Bool = false) {
@@ -324,6 +318,8 @@ final class DraftStore: ObservableObject {
                 }
                 do {
                     let capture = try await GameScreenOCR.scan(catalog: self.catalog, playerClass: self.playerClass)
+                    guard !Task.isCancelled else { break }
+                    self.scanFailureNeedsAttention = false
                     if let detected = capture.detectedClass { self.setDetectedClass(detected) }
                     self.scanStatus = capture.message
                     self.scanDetails = "\(capture.windowName) · \(capture.recognizedLines.count) OCR lines"
@@ -335,6 +331,11 @@ final class DraftStore: ObservableObject {
                         self.updateOffer(names, source: "On-screen OCR")
                     } else {
                         self.stableFrames = 0; self.lastDetected = ""
+                        // Don't keep recommending the previous offer while the
+                        // next one is animating or its names are unreadable.
+                        if self.sourceLabel == "On-screen OCR" {
+                            self.choices = (0..<3).map { OfferedCard(id: $0) }
+                        }
                     }
                 } catch {
                     // Pause on the first failure. Retrying SCShareableContent
@@ -355,7 +356,7 @@ final class DraftStore: ObservableObject {
                     self.scannerTask = nil
                     break
                 }
-                try? await Task.sleep(for: .milliseconds(800))
+                try? await Task.sleep(for: .milliseconds(250))
             }
         }
     }
