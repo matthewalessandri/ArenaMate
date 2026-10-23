@@ -14,7 +14,7 @@ def release_version(tag):
 
 def validate_key(value, lengths, label):
     try:
-        decoded = base64.b64decode(value, validate=True)
+        decoded = base64.b64decode("".join(value.split()), validate=True)
     except (ValueError, binascii.Error):
         raise ValueError(f"{label} is missing or is not valid base64.") from None
     if len(decoded) not in lengths:
