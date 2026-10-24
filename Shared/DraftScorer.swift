@@ -197,6 +197,23 @@ public enum DraftScorer {
                 insights.append((2, "You haven't drafted a recovery card yet; \(card.name) adds one."))
             }
         }
+        if let bodies = summonedBodies(card), bodies.count >= 2 {
+            let refill = "\(card.name) is a board refill with \(bodies.description)."
+            if hasCharacterSpellDiscount(card) {
+                let support = picks.map(\.card).filter(isCharacterTargetedSpell)
+                if !support.isEmpty {
+                    diff += Double(min(4, support.count))
+                    reasons.append("Character-targeted spell discount support")
+                    let partners = support.prefix(2).map(\.name).joined(separator: " and ")
+                    insights.append((5.5, refill + " You've drafted \(support.count) character-targeted spell\(support.count == 1 ? "" : "s"), including \(partners), to help reduce its \(cost)-mana starting cost."))
+                } else {
+                    diff -= 3; reasons.append("Discount needs character-targeted spells")
+                    insights.append((5.5, refill + " At \(cost) mana it's a slow refill; you still need character-targeted spells to support the discount."))
+                }
+            } else {
+                insights.append((2, refill + " Multiple bodies make a single-target answer less effective, though a board clear can still punish it."))
+            }
+        }
         let bounded = max(-9, min(9, diff))
         let total = max(0, min(100, base + bounded))
         if reasons.isEmpty { reasons.append(imported == nil ? "Estimated from card stats and text" : "Imported base rating") }
@@ -206,6 +223,62 @@ public enum DraftScorer {
                            explanation: explanation(card, imported: imported, factors: estimate.factors, insights: insights, cautions: cautions),
                            factors: imported == nil ? estimate.factors : [], hasDeckReason: !insights.isEmpty,
                            caution: cautions.max(by: { $0.priority < $1.priority })?.text)
+    }
+
+    private struct SummonedBodies {
+        let count: Int
+        let attack: Int
+        let health: Int
+        var description: String {
+            let words = [1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven"]
+            return "\(words[count] ?? String(count)) \(attack)/\(health) \(count == 1 ? "body" : "bodies")"
+        }
+    }
+
+    /// Handle explicit summon counts/stats without guessing token identities or
+    /// assuming that conditional copies and enemy summons benefit our board.
+    private static func summonedBodies(_ card: ArenaCard) -> SummonedBodies? {
+        guard card.type == "SPELL" else { return nil }
+        let text = card.plainText.lowercased().replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let pattern = #"\bsummon (a|an|one|two|three|four|five|six|seven|[1-7]) (\d+)/(\d+)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range, in: text),
+              let countRange = Range(match.range(at: 1), in: text),
+              let attackRange = Range(match.range(at: 2), in: text),
+              let healthRange = Range(match.range(at: 3), in: text),
+              let attack = Int(text[attackRange]), let health = Int(text[healthRange]),
+              (0...100).contains(attack), (1...100).contains(health) else { return nil }
+        let words = ["a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7]
+        guard let count = words[String(text[countRange])] ?? Int(text[countRange]) else { return nil }
+        let before = text[..<range.lowerBound].split(separator: ".").last.map(String.init) ?? ""
+        let after = text[range.upperBound...].split(separator: ".").first.map(String.init) ?? ""
+        guard !before.contains("can't"), !before.contains("cannot"), !before.contains("do not"),
+              !before.contains("if "), !before.contains("deathrattle"), !before.contains("whenever "),
+              !before.contains("after "), !before.contains("at the "), !before.contains("at end "),
+              !after.contains("opponent"), !after.contains("for each"), !after.contains("if ") else { return nil }
+        return SummonedBodies(count: count, attack: attack, health: health)
+    }
+
+    private static func hasCharacterSpellDiscount(_ card: ArenaCard) -> Bool {
+        let text = card.plainText.lowercased().replacingOccurrences(of: "’", with: "'")
+        return text.contains("costs (1) less") && text.contains("spell") && text.contains("cast on characters")
+    }
+
+    /// Count clearly targeted effects as potential enablers, never as casts
+    /// that have already happened. Exclude auras, global and random effects.
+    private static func isCharacterTargetedSpell(_ card: ArenaCard) -> Bool {
+        guard card.type == "SPELL" else { return false }
+        let text = card.plainText.lowercased().replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let clause = text.split(separator: ".").first.map(String.init) ?? text
+        guard !clause.contains("random"), !clause.contains("all "), !clause.contains("left-most"),
+              !clause.contains("right-most"), !clause.contains("opponent casts") else { return false }
+        let patterns = [
+            #"\b(?:give|set|transform|destroy|silence|freeze) (?:a|an) (?:(?:friendly|enemy) )?(?:minion|character)\b"#,
+            #"\bdeal \$?\d+ damage(?:$| to (?:a|an) (?:(?:friendly|enemy) )?(?:minion|character)\b)"#,
+            #"\brestore \$?\d+ health to (?:a|an) (?:friendly )?(?:minion|character)\b"#
+        ]
+        return patterns.contains { clause.range(of: $0, options: .regularExpression) != nil }
     }
 
     private static func supportsTribe(_ text: String, tribe: String) -> Bool {
@@ -234,7 +307,7 @@ public enum DraftScorer {
         } else {
             let strengths = strongestFactors(factors)
             if strengths.isEmpty {
-                lead = "I can't identify a specific advantage for \(card.name) from the card information available."
+                lead = "\(card.name)'s effect isn't covered by the current scoring rules, so this estimate needs caution."
             } else {
                 let cost = card.cost.map { " At \($0) mana," } ?? ""
                 lead = "\(card.name):\(cost) I'm weighing \(joined(strengths)) most heavily."
@@ -324,6 +397,12 @@ public enum DraftScorer {
             }
         } else if card.type == "SPELL" {
             add("type", "spell flexibility", 4)
+            if let bodies = summonedBodies(card) {
+                let stats = Double(bodies.count * (bodies.attack + bodies.health))
+                let efficiency = max(-15, min(14, (stats - (cost * 2 + 1)) * 3))
+                let width = Double(min(6, (bodies.count - 1) * 2))
+                add("summon", bodies.description, efficiency + width)
+            }
             if text.contains("deal") && text.contains("damage") { add("damage", "damage", 10) }
             if text.contains("all enemy minions") || text.contains("all enemies") { add("area", "a board-wide effect", 10) }
             if text.contains("draw") || text.contains("discover") { add(text.contains("discover") ? "discover" : "draw", text.contains("discover") ? "Discover options" : "card draw", 6) }

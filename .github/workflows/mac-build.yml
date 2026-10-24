@@ -62,6 +62,10 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$app/Contents/Info.plist")" = true
           codesign --verify --deep --strict "$app"
           lipo "$app/Contents/MacOS/ArenaMate" -verify_arch arm64 x86_64
+      - name: Check overlay startup, layout, and reopen
+        shell: bash
+        run: |
+          python3 Scripts/check_overlay_startup.py "$RUNNER_TEMP/ArenaMateDerivedData/Build/Products/Release/ArenaMate.app" "$RUNNER_TEMP/overlay-startup.json"
       - name: Package DMG and update archive
         shell: bash
         run: |
