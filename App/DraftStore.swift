@@ -180,8 +180,9 @@ final class DraftStore: ObservableObject {
 
     /// Explain the same deck needs and synergies used by the scorer.
     var recommendationExplanation: String? {
-        guard let index = recommendedIndex else { return nil }
-        return score(at: index)?.explanation
+        let offers = choices.compactMap(\.matched)
+        return DraftScorer.recommendation(offers: offers, picks: picks,
+                                          ratings: importedRatings, playerClass: playerClass)
     }
 
     func recordPick(_ index: Int, auto: Bool = false) {
