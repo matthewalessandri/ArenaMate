@@ -226,9 +226,11 @@ struct OverlayView: View {
                 Text("\(store.cardCount) cards").font(.caption2).foregroundStyle(.secondary)
             }
             HStack {
-                Button("Import ratings CSV") { ratingsPicker = true }
-                Text("\(store.ratingsCount) ratings").font(.caption2).foregroundStyle(.secondary)
+                Button("Refresh Arena ratings") { Task { await store.refreshPerformanceRatings(force: true) } }
+                Text("\(store.ratingsCount)").font(.caption2).foregroundStyle(.secondary)
             }
+            Text(store.ratingSource).font(.caption2).foregroundStyle(.secondary)
+            Button("Import ratings CSV…") { ratingsPicker = true }
             Button("Enable Arena logging") { store.enableArenaLogs() }
             Button("Copy OCR report") { store.copyScanDiagnostics() }
             Button("New draft") { confirmReset = true }

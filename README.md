@@ -12,6 +12,10 @@ Native macOS Hearthstone Arena drafting companion. This is the current **v4.6-ba
 
 **Current release limitations:** The GitHub CI output uses ad-hoc signing and is NOT notarized by Apple. It can prompt Gatekeeper warnings and macOS screen-recording permissions. Sparkle checks for updates with user consent and verifies signed feeds and archives. Release builds require the update signing key described in [UPDATES.md](UPDATES.md). Developer ID signing and notarization remain outstanding; ad-hoc app signing can cause screen-recording permission prompts after replacement. Do not place signing private keys in the repository.
 
+## Draft ratings
+
+ArenaMate refreshes the free HSReplay Arena card-statistics feed at most twice a day and caches it locally. It turns class-specific drawn win rates into relative ratings, shrinks low-sample results toward the class average, and then applies the local deck-need and verified-synergy adjustments. If the feed is unavailable, the last cache remains active; without a cache, ArenaMate uses its built-in estimates. The settings popover identifies the active source and still supports user-supplied CSV ratings.
+
 ## Roadmap for Codex
 
 1. Fix capture and OCR against actual Hearthstone screenshots, including legendary groups, avoiding false positions from sidebars and hover cards.

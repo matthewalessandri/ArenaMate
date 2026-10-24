@@ -28,6 +28,7 @@ final class DraftStore: ObservableObject {
     @Published var overlayVisible = false
     @Published var cardCount = 0
     @Published var ratingsCount = 0
+    @Published var ratingSource = "Built-in estimates"
     @Published var showScores = true
     @Published var autoRecordLogPicks = true
     @Published var previewImage: NSImage?
@@ -55,9 +56,14 @@ final class DraftStore: ObservableObject {
         playerClass = UserDefaults.standard.string(forKey: "arena.class") ?? "MAGE"
         showScores = UserDefaults.standard.object(forKey: "arena.showscores") as? Bool ?? true
         autoRecordLogPicks = UserDefaults.standard.object(forKey: "arena.autopicks") as? Bool ?? true
-        if let bytes = try? Data(contentsOf: storeDir.appendingPathComponent("ratings.csv")),
+        if let bytes = try? Data(contentsOf: storeDir.appendingPathComponent("arena-performance.json")),
+           let loaded = try? JSONDecoder().decode(ExternalRatings.self, from: bytes) {
+            importedRatings = loaded; updateRatingCount()
+            ratingSource = "Recent Arena results"
+        } else if let bytes = try? Data(contentsOf: storeDir.appendingPathComponent("ratings.csv")),
            let loaded = try? ExternalRatings.parseCSV(bytes) {
             importedRatings = loaded; updateRatingCount()
+            ratingSource = "Imported ratings"
         }
         if let bytes = try? Data(contentsOf: storeDir.appendingPathComponent("cards.json")),
            let loaded = try? JSONDecoder().decode([ArenaCard].self, from: bytes) {
@@ -66,7 +72,8 @@ final class DraftStore: ObservableObject {
     }
 
     private func updateRatingCount() {
-        ratingsCount = importedRatings.byId.count + importedRatings.byName.count + importedRatings.byClassAndName.count
+        ratingsCount = importedRatings.byId.count + importedRatings.byName.count +
+            importedRatings.byClassAndName.count + importedRatings.performanceByClassAndId.count
     }
 
     private func installCards(_ cards: [ArenaCard]) {
@@ -91,6 +98,33 @@ final class DraftStore: ObservableObject {
             status = "Loaded \(cardCount) cards · Ready to scan"
         } catch {
             status = "Catalog update failed: \(error.localizedDescription)" + (cardCount > 0 ? " · Cached cards still available" : "")
+        }
+    }
+
+    func refreshPerformanceRatings(force: Bool = false) async {
+        let cacheURL = storeDir.appendingPathComponent("arena-performance.json")
+        if !force, ratingsCount > 0,
+           let modified = try? cacheURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+           Date().timeIntervalSince(modified) < 12 * 60 * 60 { return }
+        do {
+            let url = URL(string: "https://hsreplay.net/api/v1/arena/card_stats/free/?format=json")!
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 40
+            request.setValue("ArenaMate/4.6 (+https://github.com/matthewalessandri/ArenaMate)",
+                             forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw DownloadError.http }
+            let parsed = try ExternalRatings.parseHSReplay(data)
+            let encoded = try JSONEncoder().encode(parsed)
+            try encoded.write(to: cacheURL, options: .atomic)
+            importedRatings = parsed
+            updateRatingCount()
+            ratingSource = "Recent Arena results"
+            status = "Updated \(ratingsCount) class-specific Arena ratings"
+        } catch {
+            status = ratingsCount > 0
+                ? "Arena ratings update failed; cached ratings remain active"
+                : "Arena ratings unavailable; using built-in deck analysis"
         }
     }
 
@@ -126,6 +160,7 @@ final class DraftStore: ObservableObject {
             let parsed = try ExternalRatings.parseCSV(data)
             importedRatings = parsed
             updateRatingCount()
+            ratingSource = "Imported ratings"
             try data.write(to: storeDir.appendingPathComponent("ratings.csv"), options: .atomic)
             status = "Imported \(ratingsCount) card ratings from CSV"
         } catch { status = "Could not import CSV: \(error.localizedDescription)" }

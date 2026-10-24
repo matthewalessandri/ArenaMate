@@ -26,81 +26,14 @@ public struct ScoreDetail: Sendable {
     public let factors: [ScoreFactor]
     public let hasDeckReason: Bool
     public let caution: String?
-}
-
-public struct ExternalRatings: Sendable {
-    public var byId: [String: Double] = [:]
-    public var byClassAndName: [String: Double] = [:]
-    public var byName: [String: Double] = [:]
-
-    public init() {}
-
-    public func score(card: ArenaCard, playerClass: String) -> Double? {
-        if let value = byId[card.id.uppercased()] { return value }
-        if let value = card.dbfId.flatMap({ byId[String($0)] }) { return value }
-        let name = CatalogIndex.normalize(card.name)
-        let cls = playerClass.uppercased()
-        return byClassAndName["\(cls)|\(name)"] ?? byName[name]
-    }
-
-    public static func parseCSV(_ data: Data) throws -> ExternalRatings {
-        guard let text = String(data: data, encoding: .utf8) else { throw CSVError.encoding }
-        let rows = csvRows(text).filter { !$0.isEmpty && !$0.allSatisfy { $0.isEmpty } }
-        guard let header = rows.first else { throw CSVError.header }
-        let columns = header.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-        guard let scoreCol = columns.firstIndex(where: { ["score", "rating", "value"].contains($0) }) else { throw CSVError.header }
-        let nameCol = columns.firstIndex(of: "name") ?? columns.firstIndex(of: "card")
-        let idCol = columns.firstIndex(of: "id") ?? columns.firstIndex(of: "cardid")
-        let clsCol = columns.firstIndex(of: "class") ?? columns.firstIndex(of: "cardclass")
-        guard nameCol != nil || idCol != nil else { throw CSVError.header }
-        var result = ExternalRatings()
-        for row in rows.dropFirst() {
-            guard scoreCol < row.count, let score = Double(row[scoreCol].trimmingCharacters(in: .whitespaces)), score.isFinite, (0...100).contains(score) else { continue }
-            if let idCol, idCol < row.count, !row[idCol].isEmpty { result.byId[row[idCol].uppercased()] = score }
-            if let nameCol, nameCol < row.count, !row[nameCol].isEmpty {
-                let name = CatalogIndex.normalize(row[nameCol])
-                if let clsCol, clsCol < row.count, !row[clsCol].isEmpty {
-                    result.byClassAndName["\(row[clsCol].uppercased())|\(name)"] = score
-                } else { result.byName[name] = score }
-            }
-        }
-        return result
-    }
-
-    public enum CSVError: LocalizedError {
-        case encoding, header
-        public var errorDescription: String? {
-            switch self {
-            case .encoding: return "This CSV is not UTF-8."
-            case .header: return "CSV needs name,score columns (optional class or id)."
-            }
-        }
-    }
-
-    private static func csvRows(_ text: String) -> [[String]] {
-        var rows: [[String]] = [], row: [String] = [], field = "", quoted = false
-        let chars = Array(text.replacingOccurrences(of: "\r\n", with: "\n"))
-        var i = 0
-        while i < chars.count {
-            let ch = chars[i]
-            if ch == "\"" {
-                if quoted && i + 1 < chars.count && chars[i + 1] == "\"" { field.append("\""); i += 1 }
-                else { quoted.toggle() }
-            } else if ch == "," && !quoted { row.append(field); field = "" }
-            else if (ch == "\n" || ch == "\r") && !quoted {
-                row.append(field); rows.append(row); row = []; field = ""
-            } else { field.append(ch) }
-            i += 1
-        }
-        if !row.isEmpty || !field.isEmpty { row.append(field); rows.append(row) }
-        return rows
-    }
+    public let ratingEvidence: RatingEvidence?
 }
 
 public enum DraftScorer {
     public static func score(_ card: ArenaCard, picks: [DraftPick], ratings: ExternalRatings,
                              playerClass: String) -> ScoreDetail {
-        let imported = ratings.score(card: card, playerClass: playerClass)
+        let evidence = ratings.evidence(card: card, playerClass: playerClass)
+        let imported = evidence?.value
         let estimate = heuristic(card)
         let base = imported ?? estimate.total
         var diff = 0.0, reasons: [String] = []
@@ -218,11 +151,12 @@ public enum DraftScorer {
         let total = max(0, min(100, base + bounded))
         if reasons.isEmpty { reasons.append(imported == nil ? "Estimated from card stats and text" : "Imported base rating") }
         return ScoreDetail(total: total, base: base,
-                           label: imported == nil ? "Estimate" : "Imported tier rating",
+                           label: evidence?.source ?? "Estimate",
                            reasons: reasons, hasExternalRating: imported != nil,
-                           explanation: explanation(card, imported: imported, factors: estimate.factors, insights: insights, cautions: cautions),
+                           explanation: explanation(card, evidence: evidence, factors: estimate.factors, insights: insights, cautions: cautions),
                            factors: imported == nil ? estimate.factors : [], hasDeckReason: !insights.isEmpty,
-                           caution: cautions.max(by: { $0.priority < $1.priority })?.text)
+                           caution: cautions.max(by: { $0.priority < $1.priority })?.text,
+                           ratingEvidence: evidence)
     }
 
     private struct SummonedBodies {
@@ -296,14 +230,16 @@ public enum DraftScorer {
              (text.contains("to all enemy minions") || text.contains("to all minions") || text.contains("to all enemies")))
     }
 
-    private static func explanation(_ card: ArenaCard, imported: Double?, factors: [ScoreFactor],
+    private static func explanation(_ card: ArenaCard, evidence: RatingEvidence?, factors: [ScoreFactor],
                                     insights: [(priority: Double, text: String)],
                                     cautions: [(priority: Double, text: String)]) -> String {
         let lead: String
         if let insight = insights.max(by: { $0.priority < $1.priority }) {
             lead = insight.text
-        } else if let imported {
-            lead = "Your imported ratings give \(card.name) \(ratingText(imported))/100."
+        } else if let evidence, let percentile = evidence.percentile, let sample = evidence.sampleSize {
+            lead = "Recent Arena results place \(card.name) around the \(ordinalPercentile(percentile)) percentile for this class, from \(formattedSample(sample)) games."
+        } else if let evidence {
+            lead = "Your imported ratings give \(card.name) \(ratingText(evidence.value))/100."
         } else {
             let strengths = strongestFactors(factors)
             if strengths.isEmpty {
@@ -335,6 +271,12 @@ public enum DraftScorer {
         // individual-card comparisons.
         if chosen.hasDeckReason { return chosen.explanation }
         if chosen.hasExternalRating && other.hasExternalRating {
+            if let chosenEvidence = chosen.ratingEvidence,
+               let otherEvidence = other.ratingEvidence,
+               let chosenPercentile = chosenEvidence.percentile,
+               let otherPercentile = otherEvidence.percentile {
+                return "Recent Arena results favor \(offers[winner].name) (\(ordinalPercentile(chosenPercentile)) percentile) over \(offers[runner].name) (\(ordinalPercentile(otherPercentile)) percentile) for this class." + cautionSuffix(chosen)
+            }
             return "Your imported ratings put \(offers[winner].name) at \(ratingText(chosen.base)) and \(offers[runner].name) at \(ratingText(other.base))/100." + cautionSuffix(chosen)
         }
         if !chosen.hasExternalRating && !other.hasExternalRating {
@@ -356,6 +298,19 @@ public enum DraftScorer {
 
     private static func ratingText(_ value: Double) -> String {
         value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private static func ordinalPercentile(_ value: Double) -> String {
+        let number = max(1, min(99, Int((value * 100).rounded())))
+        let suffix: String
+        if (11...13).contains(number % 100) { suffix = "th" }
+        else { suffix = [1: "st", 2: "nd", 3: "rd"][number % 10] ?? "th" }
+        return "\(number)\(suffix)"
+    }
+
+    private static func formattedSample(_ value: Int) -> String {
+        if value >= 1_000 { return String(format: "%.1fk", Double(value) / 1_000) }
+        return String(value)
     }
 
     private static func joined(_ descriptions: [String]) -> String {

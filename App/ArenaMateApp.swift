@@ -89,6 +89,7 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             .task { [store] in
                 guard !ProcessInfo.processInfo.arguments.contains("--smoke-test") else { return }
                 if store.cardCount == 0 { await store.refreshCards() }
+                await store.refreshPerformanceRatings()
                 if !store.isScanning && store.cardCount > 0 { store.startScreenScan() }
             }
         let hostingView = NSHostingView(rootView: root)

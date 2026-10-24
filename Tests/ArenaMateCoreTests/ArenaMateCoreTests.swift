@@ -17,6 +17,43 @@ final class ArenaMateCoreTests: XCTestCase {
         XCTAssertEqual(parsed.score(card: card, playerClass: "MAGE"), 88)
         XCTAssertNil(parsed.score(card: card, playerClass: "ROGUE"))
     }
+    func testRecentArenaResultsAreClassSpecificAndSampleAware() throws {
+        let json = #"""
+        {
+          "data": {
+            "MAGE": [
+              {"card_id":"HIGH","drawn_win_rate":60,"num_games":5000},
+              {"card_id":"LOW","drawn_win_rate":45,"num_games":5000},
+              {"card_id":"TINY","drawn_win_rate":99,"num_games":1}
+            ],
+            "ALL": [
+              {"card_id":"NEUTRAL","drawn_win_rate":52,"num_games":1000}
+            ]
+          }
+        }
+        """#
+        let ratings = try ExternalRatings.parseHSReplay(Data(json.utf8), minimumRows: 4)
+        let high = ArenaCard(id: "HIGH", name: "High")
+        let low = ArenaCard(id: "LOW", name: "Low")
+        let tiny = ArenaCard(id: "TINY", name: "Tiny")
+        XCTAssertGreaterThan(try XCTUnwrap(ratings.score(card: high, playerClass: "MAGE")),
+                             try XCTUnwrap(ratings.score(card: low, playerClass: "MAGE")))
+        XCTAssertLessThan(try XCTUnwrap(ratings.score(card: tiny, playerClass: "MAGE")),
+                          try XCTUnwrap(ratings.score(card: high, playerClass: "MAGE")))
+        XCTAssertNotNil(ratings.score(card: ArenaCard(id: "NEUTRAL", name: "Neutral"), playerClass: "ROGUE"))
+        XCTAssertNil(ratings.score(card: high, playerClass: "ROGUE"))
+        XCTAssertEqual(ratings.evidence(card: high, playerClass: "MAGE")?.sampleSize, 5000)
+    }
+    func testPerformanceRatingsNormalizeMultiwordClassesAndCoreReprints() throws {
+        let json = #"{"data":{"DEATH_KNIGHT":[{"card_id":"CS2_029","drawn_win_rate":55,"num_games":1000}]}}"#
+        let ratings = try ExternalRatings.parseHSReplay(Data(json.utf8), minimumRows: 1)
+        let core = ArenaCard(id: "CORE_CS2_029", name: "Fireball")
+        XCTAssertNotNil(ratings.score(card: core, playerClass: "DEATHKNIGHT"))
+    }
+    func testRecentArenaResultsRejectIncompleteOrMalformedResponses() {
+        XCTAssertThrowsError(try ExternalRatings.parseHSReplay(Data(#"{"data":{"MAGE":[]}}"#.utf8), minimumRows: 1))
+        XCTAssertThrowsError(try ExternalRatings.parseHSReplay(Data("not json".utf8), minimumRows: 1))
+    }
     func testNoInventedTiers() {
         let card = ArenaCard(id: "X", name: "Mana Wyrm", cost: 1, type: "MINION", cardClass: "MAGE", attack: 1, health: 3)
         let result = DraftScorer.score(card, picks: [], ratings: ExternalRatings(), playerClass: "MAGE")
