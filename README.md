@@ -16,6 +16,8 @@ Native macOS Hearthstone Arena drafting companion. This is the current **v4.6-ba
 
 ArenaMate refreshes the free HSReplay Arena card-statistics feed at most twice a day and caches it locally. It turns class-specific drawn win rates into relative ratings, shrinks low-sample results toward the class average, and then applies the local deck-need and verified-synergy adjustments. If the feed is unavailable, the last cache remains active; without a cache, ArenaMate uses its built-in estimates. The settings popover identifies the active source and still supports user-supplied CSV ratings.
 
+The contextual scorer tracks removal, board clears, draw, generation, recovery, reach, early board cards, late threats, and curve pressure. Adjustments depend on draft stage, and every recommendation reports whether the evidence is clear, favored, close, or limited. Completed pick decisions are retained only in the user's ArenaMate Application Support directory; the settings popover can copy this local history for comparison and tuning. ArenaMate does not upload draft history.
+
 ## Roadmap for Codex
 
 1. Fix capture and OCR against actual Hearthstone screenshots, including legendary groups, avoiding false positions from sidebars and hover cards.

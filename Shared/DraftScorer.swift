@@ -29,6 +29,22 @@ public struct ScoreDetail: Sendable {
     public let ratingEvidence: RatingEvidence?
 }
 
+public enum RecommendationConfidence: String, Codable, Sendable {
+    case clear = "Clear pick"
+    case favored = "Favored"
+    case close = "Close choice"
+    case limited = "Limited evidence"
+}
+
+public struct DraftRecommendation: Sendable {
+    public let winnerIndex: Int
+    public let runnerUpIndex: Int
+    public let margin: Double
+    public let confidence: RecommendationConfidence
+    public let explanation: String
+    public let details: [ScoreDetail]
+}
+
 public enum DraftScorer {
     public static func score(_ card: ArenaCard, picks: [DraftPick], ratings: ExternalRatings,
                              playerClass: String) -> ScoreDetail {
@@ -40,19 +56,36 @@ public enum DraftScorer {
         var insights: [(priority: Double, text: String)] = []
         var cautions: [(priority: Double, text: String)] = []
         let cost = card.cost ?? 0
+        let profile = DeckProfile(cards: picks.map(\.card))
+        let offeredRoles = DraftAnalysis.roles(of: card)
         let minions = picks.map(\.card).filter { $0.type == "MINION" }
-        let early = picks.filter { ($0.card.cost ?? 0) <= 2 && $0.card.type == "MINION" }.count
+        let early = profile.count(.earlyBoard)
         let expensive = picks.filter { ($0.card.cost ?? 0) >= 6 }.count
-        let effectiveTarget = max(4, Int(Double(max(1, picks.count)) * 0.26))
+        let effectiveTarget = max(1, Int(ceil(Double(max(1, picks.count)) * 0.20)))
         if card.type == "MINION" && (1...2).contains(cost) && early < effectiveTarget {
             diff += 3; reasons.append("Helps early-game curve")
             insights.append((3, picks.isEmpty
                 ? "I'd start with this early play to help build a smooth curve."
                 : "You're short on early minions. This gives you another play before turn three."))
         }
-        if cost >= 6 && expensive >= max(2, picks.count / 7) {
+        if picks.count >= 8 && cost >= 6 && expensive >= max(3, picks.count / 5) {
             diff -= 4; reasons.append("Already heavy at 6+ mana")
             cautions.append((4, "Your deck is already heavy at six mana and up, so watch your curve."))
+        }
+        if picks.count >= 10 {
+            let bandCount: Int
+            let bandName: String
+            let limit: Double
+            switch cost {
+            case ...2: bandCount = picks.filter { ($0.card.cost ?? 0) <= 2 }.count; bandName = "early"; limit = 0.42
+            case 3: bandCount = profile.curve[3, default: 0]; bandName = "three-mana"; limit = 0.30
+            case 4...6: bandCount = (4...6).reduce(0) { $0 + profile.curve[$1, default: 0] }; bandName = "mid-cost"; limit = 0.55
+            default: bandCount = profile.curve[7, default: 0]; bandName = "expensive"; limit = 0.24
+            }
+            if Double(bandCount + 1) / Double(picks.count + 1) > limit {
+                diff -= 2; reasons.append("Crowded \(bandName) curve")
+                cautions.append((3.5, "Your \(bandName) slots are already crowded, so adding another makes the curve less balanced."))
+            }
         }
         let text = card.plainText.lowercased()
         let allTexts = picks.map { $0.card.plainText.lowercased() }
@@ -109,24 +142,42 @@ public enum DraftScorer {
             diff += 3; reasons.append("Magnetic target drafted")
             insights.append((5, "This fits the Mechs you've already drafted, including \(partner.name)."))
         }
-        if isBoardClear(card) {
-            let clears = picks.filter { isBoardClear($0.card) }.count
+        if offeredRoles.contains(.boardClear) {
+            let clears = profile.count(.boardClear)
             if picks.count >= 4 && clears == 0 {
                 diff += 4; reasons.append("First board clear")
                 insights.append((6, "You don't have a board clear yet, and this fills that gap."))
             }
         }
+        if picks.count >= 8 && profile.count(.removal) < max(1, picks.count / 8),
+           offeredRoles.contains(.removal), !offeredRoles.contains(.boardClear) {
+            diff += 3; reasons.append("Adds needed removal")
+            insights.append((5.5, "Your deck is light on removal. \(card.name) gives you another answer to an opposing threat."))
+        }
+        if picks.count >= 8 && profile.count(.draw) == 0 && offeredRoles.contains(.draw) {
+            diff += 3; reasons.append("First card draw")
+        }
+        if picks.count >= 12 && profile.count(.recovery) == 0 && offeredRoles.contains(.recovery) {
+            diff += 2; reasons.append("First recovery card")
+            insights.append((3.5, "You don't have a recovery card yet, and this gives the deck a way to stabilize."))
+        }
+        if picks.count >= 15 && profile.count(.draw) == 0 && profile.count(.generation) == 0 &&
+           offeredRoles.contains(.generation) {
+            diff += 2; reasons.append("Adds late-draft value")
+            insights.append((3, "Your deck is short on ways to create additional cards, so this helps it avoid running out of resources."))
+        }
+        if picks.count >= 18 && profile.count(.lateThreat) == 0 && offeredRoles.contains(.lateThreat) {
+            diff += 2; reasons.append("Adds a late-game threat")
+            insights.append((3.5, "You don't have a clear late-game threat yet. This gives the deck a stronger way to close games."))
+        }
         if picks.count >= 5 {
-            if text.contains("draw a card") && !text.contains("your opponent draws") {
-                let drawCount = allTexts.filter { $0.contains("draw") }.count
-                if drawCount == 0 {
+            if offeredRoles.contains(.draw) {
+                if profile.count(.draw) == 0 {
                     let extra = text.contains("deal") && text.contains("damage") ? " alongside damage" : ""
                     insights.append((2.5, "None of your \(picks.count) drafted cards provide card draw yet. \(card.name) adds draw\(extra)."))
                 }
             }
-            if estimate.factors.contains(where: { $0.key == "LIFESTEAL" && $0.points > 0 }), !picks.contains(where: {
-                ($0.card.mechanics ?? []).contains("LIFESTEAL") || $0.card.plainText.lowercased().contains("lifesteal") || ($0.card.plainText.lowercased().contains("restore") && $0.card.plainText.lowercased().contains("health"))
-            }) {
+            if offeredRoles.contains(.recovery), profile.count(.recovery) == 0 {
                 insights.append((2, "You haven't drafted a recovery card yet; \(card.name) adds one."))
             }
         }
@@ -221,15 +272,6 @@ public enum DraftScorer {
         text.contains("after you summon a \(tribe)")
     }
 
-    /// Require an actual damaging/destroying effect, not a buff mentioning
-    /// "all minions", a single-target removal, or damage to heroes only.
-    private static func isBoardClear(_ card: ArenaCard) -> Bool {
-        let text = card.plainText.lowercased()
-        return text.contains("destroy all minions") || text.contains("destroy all enemy minions") ||
-            ((text.contains("deal") && text.contains("damage")) &&
-             (text.contains("to all enemy minions") || text.contains("to all minions") || text.contains("to all enemies")))
-    }
-
     private static func explanation(_ card: ArenaCard, evidence: RatingEvidence?, factors: [ScoreFactor],
                                     insights: [(priority: Double, text: String)],
                                     cautions: [(priority: Double, text: String)]) -> String {
@@ -259,11 +301,28 @@ public enum DraftScorer {
     /// score contributions that determine the recommendation.
     public static func recommendation(offers: [ArenaCard], picks: [DraftPick], ratings: ExternalRatings,
                                       playerClass: String) -> String? {
+        recommendationSummary(offers: offers, picks: picks, ratings: ratings,
+                              playerClass: playerClass)?.explanation
+    }
+
+    public static func recommendationSummary(offers: [ArenaCard], picks: [DraftPick],
+                                             ratings: ExternalRatings,
+                                             playerClass: String) -> DraftRecommendation? {
         guard offers.count == 3 else { return nil }
         let details = offers.map { score($0, picks: picks, ratings: ratings, playerClass: playerClass) }
         guard let winner = details.indices.max(by: { details[$0].total < details[$1].total }),
               let runner = details.indices.filter({ $0 != winner }).max(by: { details[$0].total < details[$1].total }) else { return nil }
         let chosen = details[winner], other = details[runner]
+        let margin = max(0, chosen.total - other.total)
+        let confidence = confidence(margin: margin, chosen: chosen, runner: other)
+        let explanation = recommendationText(offers: offers, winner: winner, runner: runner,
+                                             chosen: chosen, other: other)
+        return DraftRecommendation(winnerIndex: winner, runnerUpIndex: runner, margin: margin,
+                                   confidence: confidence, explanation: explanation, details: details)
+    }
+
+    private static func recommendationText(offers: [ArenaCard], winner: Int, runner: Int,
+                                           chosen: ScoreDetail, other: ScoreDetail) -> String {
         if abs(chosen.total - other.total) < 0.5 {
             return "\(offers[winner].name) and \(offers[runner].name) are tied in my estimate. " + chosen.explanation
         }
@@ -290,6 +349,16 @@ public enum DraftScorer {
             }
         }
         return chosen.explanation
+    }
+
+    private static func confidence(margin: Double, chosen: ScoreDetail,
+                                   runner: ScoreDetail) -> RecommendationConfidence {
+        if margin < 2 { return .close }
+        let samples = [chosen.ratingEvidence?.sampleSize, runner.ratingEvidence?.sampleSize].compactMap { $0 }
+        if chosen.hasExternalRating != runner.hasExternalRating ||
+            (!samples.isEmpty && samples.contains(where: { $0 < 200 })) { return .limited }
+        if margin >= 7 && (samples.count == 2 || chosen.hasDeckReason) { return .clear }
+        return .favored
     }
 
     private static func cautionSuffix(_ detail: ScoreDetail) -> String {
