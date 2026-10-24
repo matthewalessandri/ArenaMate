@@ -2,6 +2,24 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension Notification.Name {
+    static let arenaMateToggleSettings = Notification.Name("ArenaMateToggleSettings")
+}
+
+private struct TitlebarSettingsControl: View {
+    var body: some View {
+        Button {
+            NotificationCenter.default.post(name: .arenaMateToggleSettings, object: nil)
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 22, height: 20)
+        }
+        .buttonStyle(.plain)
+        .help("Draft settings")
+    }
+}
+
 // ArenaMate has one visible window: the compact drafting NSPanel.
 // Apply its appearance when the hosted view actually attaches to a window.
 struct FloatingWindowConfigurator: NSViewRepresentable {
@@ -33,6 +51,17 @@ struct FloatingWindowConfigurator: NSViewRepresentable {
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(red: 0.17, green: 0.105, blue: 0.066, alpha: 1)
         window.minSize = NSSize(width: 650, height: 195)
+
+        let identifier = NSUserInterfaceItemIdentifier("ArenaMateTitlebarSettings")
+        if !window.titlebarAccessoryViewControllers.contains(where: { $0.view.identifier == identifier }) {
+            let accessory = NSTitlebarAccessoryViewController()
+            let hostingView = NSHostingView(rootView: TitlebarSettingsControl())
+            hostingView.identifier = identifier
+            hostingView.frame = NSRect(x: 0, y: 0, width: 28, height: 24)
+            accessory.view = hostingView
+            accessory.layoutAttribute = .left
+            window.addTitlebarAccessoryViewController(accessory)
+        }
     }
 }
 
@@ -73,11 +102,9 @@ struct OverlayView: View {
                 Text("ARENAMATE")
                     .font(.system(size: 14, weight: .heavy, design: .serif))
                     .tracking(1.1).foregroundStyle(parchment)
-                Spacer()
-                Button { showSettings.toggle() } label: { Image(systemName: "gearshape") }
-                    .help("More settings")
                     .popover(isPresented: $showSettings) { settingsPopover }
                     .popover(isPresented: $showDraftHistory) { historyPopover }
+                Spacer()
             }
             .buttonStyle(.borderless)
             .padding(.top, 3)
@@ -198,6 +225,10 @@ struct OverlayView: View {
         .background(wood)
         .preferredColorScheme(.dark)
         .background(FloatingWindowConfigurator().frame(width: 0, height: 0))
+        .onReceive(NotificationCenter.default.publisher(for: .arenaMateToggleSettings)) { _ in
+            showDraftHistory = false
+            showSettings.toggle()
+        }
         .fileImporter(isPresented: $ratingsPicker, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in
             if case .success(let url) = result { store.importRatings(at: url) }
         }
