@@ -137,10 +137,18 @@ struct OverlayView: View {
                         .clipShape(Circle())
                         .overlay(Circle().stroke(brass, lineWidth: 2))
                         .accessibilityLabel("The Innkeeper")
-                    Text(explanation)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(parchment)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(explanation)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(parchment)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let confidence = store.recommendationConfidence {
+                            Text(confidence.rawValue.uppercased())
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(brass.opacity(0.9))
+                        }
+                    }
                 }
                 .padding(.horizontal, 9).padding(.vertical, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,6 +241,8 @@ struct OverlayView: View {
             Button("Import ratings CSV…") { ratingsPicker = true }
             Button("Enable Arena logging") { store.enableArenaLogs() }
             Button("Copy OCR report") { store.copyScanDiagnostics() }
+            Button("Copy decision history (\(store.decisionCount))") { store.copyDecisionHistory() }
+                .disabled(store.decisionCount == 0)
             Button("New draft") { confirmReset = true }
             if !store.logStatus.isEmpty { Text(store.logStatus).font(.caption2).foregroundStyle(.secondary) }
             if !store.status.isEmpty { Text(store.status).font(.caption2).foregroundStyle(.secondary) }

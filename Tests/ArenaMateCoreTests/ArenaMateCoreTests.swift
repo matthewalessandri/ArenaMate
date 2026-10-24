@@ -575,3 +575,42 @@ final class SummonPayoffTests: XCTestCase {
         XCTAssertFalse(score(card).explanation.contains("card information available"))
     }
 }
+
+final class ContextualDraftAnalysisTests: XCTestCase {
+    private func pick(_ card: ArenaCard) -> DraftPick { DraftPick(card: card, score: 50) }
+
+    func testRolesRequireConcreteCardEffects() {
+        let clear = ArenaCard(id: "C", name: "Clear", cost: 5, type: "SPELL",
+                              text: "Deal 3 damage to all enemy minions.")
+        let removal = ArenaCard(id: "R", name: "Removal", cost: 3, type: "SPELL",
+                                text: "Destroy an enemy minion.")
+        let draw = ArenaCard(id: "D", name: "Draw", cost: 3, type: "SPELL", text: "Draw 2 cards.")
+        XCTAssertEqual(DraftAnalysis.roles(of: clear), [.boardClear, .removal])
+        XCTAssertEqual(DraftAnalysis.roles(of: removal), [.removal])
+        XCTAssertEqual(DraftAnalysis.roles(of: draw), [.draw])
+        XCTAssertFalse(DraftAnalysis.roles(of: ArenaCard(id: "F", name: "Fake", text: "Give all minions +1 Attack.")).contains(.boardClear))
+    }
+
+    func testLateDraftMissingRemovalChangesScoreAndExplanation() {
+        let filler = ArenaCard(id: "F", name: "Filler", cost: 4, type: "MINION", attack: 4, health: 5)
+        let removal = ArenaCard(id: "R", name: "Clean Answer", cost: 3, type: "SPELL",
+                                text: "Destroy an enemy minion.")
+        let early = DraftScorer.score(removal, picks: [], ratings: ExternalRatings(), playerClass: "MAGE")
+        let latePicks = Array(repeating: pick(filler), count: 12)
+        let late = DraftScorer.score(removal, picks: latePicks, ratings: ExternalRatings(), playerClass: "MAGE")
+        XCTAssertGreaterThan(late.total, early.total)
+        XCTAssertTrue(late.reasons.contains("Adds needed removal"))
+        XCTAssertTrue(late.explanation.contains("light on removal"))
+    }
+
+    func testRecommendationConfidenceReflectsMarginAndEvidence() throws {
+        let cards = [ArenaCard(id: "A", name: "A"), ArenaCard(id: "B", name: "B"), ArenaCard(id: "C", name: "C")]
+        var ratings = ExternalRatings()
+        ratings.byId = ["A": 80, "B": 79, "C": 50]
+        XCTAssertEqual(try XCTUnwrap(DraftScorer.recommendationSummary(
+            offers: cards, picks: [], ratings: ratings, playerClass: "MAGE")).confidence, .close)
+        ratings.byId["A"] = 95
+        XCTAssertEqual(try XCTUnwrap(DraftScorer.recommendationSummary(
+            offers: cards, picks: [], ratings: ratings, playerClass: "MAGE")).confidence, .favored)
+    }
+}

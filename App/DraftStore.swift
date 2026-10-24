@@ -10,6 +10,30 @@ struct OfferedCard: Identifiable {
     var confidence = 0.0
 }
 
+private struct DraftDecisionRecord: Codable {
+    struct Option: Codable {
+        let cardID: String
+        let name: String
+        let score: Double
+        let baseScore: Double
+        let reasons: [String]
+        let source: String
+        let sampleSize: Int?
+        let percentile: Double?
+    }
+    let recordedAt: Date
+    let playerClass: String
+    let pickNumber: Int
+    let draftedCardIDs: [String]
+    let options: [Option]
+    let recommendedIndex: Int
+    let selectedIndex: Int
+    let confidence: RecommendationConfidence
+    let scoreMargin: Double
+    let followedRecommendation: Bool
+    let automaticPick: Bool
+}
+
 @MainActor
 final class DraftStore: ObservableObject {
     @Published var picks: [DraftPick] = []
@@ -29,6 +53,7 @@ final class DraftStore: ObservableObject {
     @Published var cardCount = 0
     @Published var ratingsCount = 0
     @Published var ratingSource = "Built-in estimates"
+    @Published var decisionCount = 0
     @Published var showScores = true
     @Published var autoRecordLogPicks = true
     @Published var previewImage: NSImage?
@@ -36,6 +61,7 @@ final class DraftStore: ObservableObject {
 
     private var catalog = CatalogIndex(cards: [])
     private var importedRatings = ExternalRatings()
+    private var decisionHistory: [DraftDecisionRecord] = []
     private var scannerTask: Task<Void, Never>?
     private var logTask: Task<Void, Never>?
     private var overlay: DraftOverlayController?
@@ -68,6 +94,11 @@ final class DraftStore: ObservableObject {
         if let bytes = try? Data(contentsOf: storeDir.appendingPathComponent("cards.json")),
            let loaded = try? JSONDecoder().decode([ArenaCard].self, from: bytes) {
             installCards(loaded); status = "Using cached catalog; press Refresh for updated cards"
+        }
+        if let data = try? Data(contentsOf: storeDir.appendingPathComponent("decision-history.json")),
+           let history = try? JSONDecoder().decode([DraftDecisionRecord].self, from: data) {
+            decisionHistory = history
+            decisionCount = history.count
         }
     }
 
@@ -205,28 +236,68 @@ final class DraftStore: ObservableObject {
     }
 
     var recommendedIndex: Int? {
-        let scored = choices.indices.compactMap { index -> (Int, Double)? in
-            guard let score = score(at: index) else { return nil }
-            return (index, score.total)
-        }
-        guard scored.count == 3 else { return nil }
-        return scored.max { $0.1 < $1.1 }?.0
+        currentRecommendation?.winnerIndex
     }
 
     /// Explain the same deck needs and synergies used by the scorer.
     var recommendationExplanation: String? {
-        let offers = choices.compactMap(\.matched)
-        return DraftScorer.recommendation(offers: offers, picks: picks,
+        currentRecommendation?.explanation
+    }
+
+    var recommendationConfidence: RecommendationConfidence? { currentRecommendation?.confidence }
+
+    private var currentRecommendation: DraftRecommendation? {
+        DraftScorer.recommendationSummary(offers: choices.compactMap(\.matched), picks: picks,
                                           ratings: importedRatings, playerClass: playerClass)
     }
 
     func recordPick(_ index: Int, auto: Bool = false) {
         guard picks.count < 30, let score = score(at: index), let card = choices[index].matched else { return }
+        recordDecision(selectedIndex: index, automatic: auto)
         picks.append(DraftPick(card: card, score: score.total))
         persistDraft()
         choices = (0..<3).map { OfferedCard(id: $0) }
         lastDetected = ""; stableFrames = 0
         status = "\(auto ? "Auto-recorded" : "Recorded") \(card.name) · Pick \(picks.count)/30"
+    }
+
+    private func recordDecision(selectedIndex: Int, automatic: Bool) {
+        guard let recommendation = currentRecommendation,
+              recommendation.details.count == choices.count,
+              choices.allSatisfy({ $0.matched != nil }) else { return }
+        let options = choices.indices.compactMap { index -> DraftDecisionRecord.Option? in
+            guard let card = choices[index].matched else { return nil }
+            let detail = recommendation.details[index]
+            return DraftDecisionRecord.Option(cardID: card.id, name: card.name, score: detail.total,
+                baseScore: detail.base, reasons: detail.reasons, source: detail.label,
+                sampleSize: detail.ratingEvidence?.sampleSize, percentile: detail.ratingEvidence?.percentile)
+        }
+        guard options.count == 3 else { return }
+        decisionHistory.append(DraftDecisionRecord(recordedAt: Date(), playerClass: playerClass,
+            pickNumber: picks.count + 1, draftedCardIDs: picks.map(\.card.id), options: options,
+            recommendedIndex: recommendation.winnerIndex, selectedIndex: selectedIndex,
+            confidence: recommendation.confidence, scoreMargin: recommendation.margin,
+            followedRecommendation: selectedIndex == recommendation.winnerIndex, automaticPick: automatic))
+        if decisionHistory.count > 1_000 { decisionHistory.removeFirst(decisionHistory.count - 1_000) }
+        decisionCount = decisionHistory.count
+        if let data = try? JSONEncoder().encode(decisionHistory) {
+            try? data.write(to: storeDir.appendingPathComponent("decision-history.json"), options: .atomic)
+        }
+    }
+
+    func copyDecisionHistory() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard !decisionHistory.isEmpty,
+              let data = try? encoder.encode(decisionHistory),
+              let text = String(data: data, encoding: .utf8) else {
+            status = "No completed pick decisions to copy yet"
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        status = "Copied \(decisionHistory.count) draft decisions"
     }
 
     func undoPick() {
