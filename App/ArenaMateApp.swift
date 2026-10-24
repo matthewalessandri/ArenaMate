@@ -76,7 +76,8 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             .onPreferenceChange(PanelContentHeight.self) { [weak panel] height in
                 Task { @MainActor in
                     guard let panel, let content = panel.contentView, height.isFinite, height > 0 else { return }
-                    let chrome = panel.frame.height - content.bounds.height
+                    guard content.bounds.width >= 650 else { return }
+                    let chrome = panel.frame.height - panel.contentRect(forFrameRect: panel.frame).height
                     let target = ceil(height) + chrome
                     guard abs(panel.frame.height - target) > 1 else { return }
                     var frame = panel.frame
@@ -90,7 +91,9 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
                 if store.cardCount == 0 { await store.refreshCards() }
                 if !store.isScanning && store.cardCount > 0 { store.startScreenScan() }
             }
-        panel.contentView = NSHostingView(rootView: root)
+        let hostingView = NSHostingView(rootView: root)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 670, height: 250)
+        panel.contentView = hostingView
         self.panel = panel
         panel.center()
         panel.makeKeyAndOrderFront(nil)
@@ -114,10 +117,16 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     private func runStartupCheck(report: URL) async {
         // Run the actual AppKit/SwiftUI lifecycle without capture permissions,
         // card downloads or updater dialogs on the macOS CI runner.
-        try? await Task.sleep(for: .milliseconds(600))
         guard let panel else { NSApp.terminate(nil); return }
-        let firstHeight = panel.frame.height
-        try? await Task.sleep(for: .milliseconds(300))
+        var previousHeight = panel.frame.height
+        var stableSamples = 0
+        for _ in 0..<30 {
+            try? await Task.sleep(for: .milliseconds(100))
+            if abs(panel.frame.height - previousHeight) < 1 { stableSamples += 1 }
+            else { stableSamples = 0 }
+            previousHeight = panel.frame.height
+            if stableSamples >= 5 { break }
+        }
         let checks = [
             "visible": panel.isVisible,
             "singleVisibleWindow": NSApp.windows.filter { $0.isVisible }.count == 1,
@@ -125,9 +134,12 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             "staysVisibleWhenInactive": !panel.hidesOnDeactivate,
             "fullscreenAuxiliary": panel.collectionBehavior.contains(.fullScreenAuxiliary),
             "allSpaces": panel.collectionBehavior.contains(.canJoinAllSpaces),
-            "stableLayout": abs(panel.frame.height - firstHeight) < 2 && panel.frame.height >= 195 && panel.frame.height < 800,
+            "stableLayout": stableSamples >= 5 && panel.frame.height >= 195 && panel.frame.height < 800,
             "captureNotStarted": !store.isScanning
         ]
+        if checks["stableLayout"] != true {
+            NSLog("Overlay layout failed to settle: frame=%@ content=%@ samples=%ld", NSStringFromRect(panel.frame), NSStringFromRect(panel.contentView?.bounds ?? .zero), stableSamples)
+        }
         panel.performClose(nil)
         let closed = !panel.isVisible
         _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)

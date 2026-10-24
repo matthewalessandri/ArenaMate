@@ -15,6 +15,7 @@ if result.returncode or not report.exists():
     raise SystemExit("The app did not finish the overlay startup check.")
 checks = json.loads(report.read_text())
 if not checks or not all(value is True for value in checks.values()):
+    print(result.stdout)
     print(json.dumps(checks, sort_keys=True))
     raise SystemExit("Overlay startup or window lifecycle failed.")
 print("Overlay startup checks passed: " + ", ".join(sorted(checks)))
