@@ -79,7 +79,10 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
                     guard let panel, let content = panel.contentView, height.isFinite, height > 0 else { return }
                     guard content.bounds.width >= 650 else { return }
                     let chrome = panel.frame.height - panel.contentRect(forFrameRect: panel.frame).height
-                    let target = max(panel.minSize.height, ceil(height) + chrome)
+                    // NSHostingView can temporarily replace NSWindow.minSize
+                    // while it attaches. Keep the product's minimum explicit
+                    // here so an early preference update cannot collapse it.
+                    let target = max(195, ceil(height) + chrome)
                     guard abs(panel.frame.height - target) > 1 else { return }
                     var frame = panel.frame
                     frame.origin.y += frame.height - target
