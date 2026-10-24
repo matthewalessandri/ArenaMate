@@ -46,6 +46,16 @@ private struct PanelContentHeight: PreferenceKey {
 
 private final class DraftFloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        var constrained = frameRect
+        if constrained.height < 195 {
+            let top = constrained.maxY
+            constrained.size.height = 195
+            constrained.origin.y = top - constrained.height
+        }
+        super.setFrame(constrained, display: flag)
+    }
 }
 
 @MainActor
