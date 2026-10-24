@@ -17,6 +17,7 @@ private struct TitlebarSettingsControl: View {
         }
         .buttonStyle(.plain)
         .help("Draft settings")
+        .padding(.trailing, 8)
     }
 }
 
@@ -46,8 +47,8 @@ struct FloatingWindowConfigurator: NSViewRepresentable {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         window.level = .screenSaver
         window.isMovableByWindowBackground = true
-        window.title = "ARENAMATE"
-        window.titleVisibility = .visible
+        window.title = "ArenaMate"
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(red: 0.17, green: 0.105, blue: 0.066, alpha: 1)
         window.minSize = NSSize(width: 650, height: 195)
@@ -57,10 +58,25 @@ struct FloatingWindowConfigurator: NSViewRepresentable {
             let accessory = NSTitlebarAccessoryViewController()
             let hostingView = NSHostingView(rootView: TitlebarSettingsControl())
             hostingView.identifier = identifier
-            hostingView.frame = NSRect(x: 0, y: 0, width: 28, height: 24)
+            hostingView.frame = NSRect(x: 0, y: 0, width: 36, height: 24)
             accessory.view = hostingView
             accessory.layoutAttribute = .right
             window.addTitlebarAccessoryViewController(accessory)
+        }
+
+        let titleIdentifier = NSUserInterfaceItemIdentifier("ArenaMateCenteredTitle")
+        if let titlebar = window.standardWindowButton(.closeButton)?.superview,
+           titlebar.subviews.contains(where: { $0.identifier == titleIdentifier }) == false {
+            let title = NSTextField(labelWithString: "ARENAMATE")
+            title.identifier = titleIdentifier
+            title.font = .systemFont(ofSize: 11, weight: .semibold)
+            title.textColor = .secondaryLabelColor
+            title.translatesAutoresizingMaskIntoConstraints = false
+            titlebar.addSubview(title)
+            NSLayoutConstraint.activate([
+                title.centerXAnchor.constraint(equalTo: titlebar.centerXAnchor),
+                title.centerYAnchor.constraint(equalTo: titlebar.centerYAnchor)
+            ])
         }
     }
 }
