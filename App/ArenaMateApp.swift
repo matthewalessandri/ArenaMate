@@ -64,6 +64,7 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         panel.hidesOnDeactivate = false
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
+        panel.minSize = NSSize(width: 650, height: 195)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.level = .screenSaver
         panel.delegate = self
