@@ -17,6 +17,43 @@ final class ArenaMateCoreTests: XCTestCase {
         XCTAssertEqual(parsed.score(card: card, playerClass: "MAGE"), 88)
         XCTAssertNil(parsed.score(card: card, playerClass: "ROGUE"))
     }
+    func testRecentArenaResultsAreClassSpecificAndSampleAware() throws {
+        let json = #"""
+        {
+          "data": {
+            "MAGE": [
+              {"card_id":"HIGH","drawn_win_rate":60,"num_games":5000},
+              {"card_id":"LOW","drawn_win_rate":45,"num_games":5000},
+              {"card_id":"TINY","drawn_win_rate":99,"num_games":1}
+            ],
+            "ALL": [
+              {"card_id":"NEUTRAL","drawn_win_rate":52,"num_games":1000}
+            ]
+          }
+        }
+        """#
+        let ratings = try ExternalRatings.parseHSReplay(Data(json.utf8), minimumRows: 4)
+        let high = ArenaCard(id: "HIGH", name: "High")
+        let low = ArenaCard(id: "LOW", name: "Low")
+        let tiny = ArenaCard(id: "TINY", name: "Tiny")
+        XCTAssertGreaterThan(try XCTUnwrap(ratings.score(card: high, playerClass: "MAGE")),
+                             try XCTUnwrap(ratings.score(card: low, playerClass: "MAGE")))
+        XCTAssertLessThan(try XCTUnwrap(ratings.score(card: tiny, playerClass: "MAGE")),
+                          try XCTUnwrap(ratings.score(card: high, playerClass: "MAGE")))
+        XCTAssertNotNil(ratings.score(card: ArenaCard(id: "NEUTRAL", name: "Neutral"), playerClass: "ROGUE"))
+        XCTAssertNil(ratings.score(card: high, playerClass: "ROGUE"))
+        XCTAssertEqual(ratings.evidence(card: high, playerClass: "MAGE")?.sampleSize, 5000)
+    }
+    func testPerformanceRatingsNormalizeMultiwordClassesAndCoreReprints() throws {
+        let json = #"{"data":{"DEATH_KNIGHT":[{"card_id":"CS2_029","drawn_win_rate":55,"num_games":1000}]}}"#
+        let ratings = try ExternalRatings.parseHSReplay(Data(json.utf8), minimumRows: 1)
+        let core = ArenaCard(id: "CORE_CS2_029", name: "Fireball")
+        XCTAssertNotNil(ratings.score(card: core, playerClass: "DEATHKNIGHT"))
+    }
+    func testRecentArenaResultsRejectIncompleteOrMalformedResponses() {
+        XCTAssertThrowsError(try ExternalRatings.parseHSReplay(Data(#"{"data":{"MAGE":[]}}"#.utf8), minimumRows: 1))
+        XCTAssertThrowsError(try ExternalRatings.parseHSReplay(Data("not json".utf8), minimumRows: 1))
+    }
     func testNoInventedTiers() {
         let card = ArenaCard(id: "X", name: "Mana Wyrm", cost: 1, type: "MINION", cardClass: "MAGE", attack: 1, health: 3)
         let result = DraftScorer.score(card, picks: [], ratings: ExternalRatings(), playerClass: "MAGE")
@@ -457,7 +494,7 @@ final class ExplicitRationaleTests: XCTestCase {
         let weak = ArenaCard(id: "W", name: "Weak Body", cost: 4, type: "MINION", attack: 1, health: 1)
         XCTAssertTrue(try XCTUnwrap(explain([body, same, weak])).contains("tied in my estimate"))
         XCTAssertNil(explain([hammer, cult]))
-        XCTAssertTrue(score(ArenaCard(id: "?", name: "Unknown")).explanation.contains("can't identify a specific advantage"))
+        XCTAssertTrue(score(ArenaCard(id: "?", name: "Unknown")).explanation.contains("current scoring rules"))
     }
     func testContributionsPreserveExistingNumericScores() {
         XCTAssertEqual(score(hammer).total, 72)
@@ -475,5 +512,66 @@ final class ExplicitRationaleTests: XCTestCase {
         let payoff = ArenaCard(id: "P", name: "Unsupported Dragon", cost: 4, type: "MINION", text: "If you're holding a Dragon, gain +2/+2.", attack: 10, health: 10)
         let text = try XCTUnwrap(explain([payoff, body, cult]))
         XCTAssertTrue(text.contains("haven't drafted any Dragon support"))
+    }
+}
+
+final class SummonPayoffTests: XCTestCase {
+    private let shanty = ArenaCard(id: "VAC_558", name: "Sea Shanty", cost: 10, type: "SPELL",
+        text: "Summon three 5/5 Pirates. Costs (1) less for each spell you've cast on characters this game.")
+    private func score(_ card: ArenaCard, support: [ArenaCard] = []) -> ScoreDetail {
+        DraftScorer.score(card, picks: support.map { DraftPick(card: $0, score: 50) }, ratings: ExternalRatings(), playerClass: "PALADIN")
+    }
+    func testSeaShantyEvaluatesBodiesAndWarnsAboutUnsupportedCost() {
+        let result = score(shanty)
+        XCTAssertTrue(result.factors.contains { $0.key == "summon" && $0.description == "three 5/5 bodies" && $0.points > 0 })
+        XCTAssertGreaterThan(result.base, 52)
+        XCTAssertTrue(result.explanation.contains("board refill"))
+        XCTAssertTrue(result.explanation.contains("10 mana"))
+        XCTAssertTrue(result.explanation.contains("still need character-targeted spells"))
+        XCTAssertFalse(result.explanation.contains("isn't covered"))
+        XCTAssertFalse(result.explanation.contains("standalone"))
+    }
+    func testDiscountSupportNamesActualTargetedSpellsWithoutAssumingCasts() {
+        let hammer = ArenaCard(id: "H", name: "Hammer of Wrath", cost: 4, type: "SPELL", text: "Deal 3 damage. Draw a card.")
+        let blessing = ArenaCard(id: "B", name: "Blessing of Kings", cost: 4, type: "SPELL", text: "Give a minion +4/+4.")
+        let result = score(shanty, support: [hammer, blessing])
+        XCTAssertTrue(result.explanation.contains("drafted 2 character-targeted spells"))
+        XCTAssertTrue(result.explanation.contains("Hammer of Wrath and Blessing of Kings"))
+        XCTAssertTrue(result.explanation.contains("help reduce its 10-mana starting cost"))
+        XCTAssertFalse(result.explanation.contains("costs 8"))
+        XCTAssertGreaterThan(result.total, score(shanty).total)
+    }
+    func testAurasDrawGlobalAndRandomSpellsAreNotDiscountEnablers() {
+        let nonTargets = [
+            ArenaCard(id: "A", name: "Deputization Aura", type: "SPELL", text: "Your left-most minion has +2 Attack and Lifesteal."),
+            ArenaCard(id: "D", name: "Draw", type: "SPELL", text: "Draw 2 cards."),
+            ArenaCard(id: "G", name: "Global", type: "SPELL", text: "Deal 3 damage to all enemy minions."),
+            ArenaCard(id: "R", name: "Random", type: "SPELL", text: "Deal 3 damage to a random enemy minion.")
+        ]
+        XCTAssertTrue(score(shanty, support: nonTargets).explanation.contains("still need character-targeted spells"))
+        XCTAssertFalse(score(shanty, support: nonTargets).reasons.contains("Character-targeted spell discount support"))
+    }
+    func testGeneralSummonParserHandlesWordsDigitsAndHTML() {
+        for text in ["Summon two 3/3 Wolves.", "<b>Summon</b> 2 3/3 Wolves.", "Summon two\n3/3 Wolves."] {
+            let card = ArenaCard(id: "S", name: "Pack", cost: 4, type: "SPELL", text: text)
+            let result = score(card)
+            XCTAssertTrue(result.factors.contains { $0.key == "summon" && $0.description == "two 3/3 bodies" })
+            XCTAssertTrue(result.explanation.contains("board refill"))
+        }
+    }
+    func testEnemyAndTriggeredSummonsAreNotTreatedAsImmediateFriendlyBoardRefills() {
+        for text in ["Summon three 5/5 Pirates for your opponent.",
+                     "If you control a Pirate, summon three 5/5 Pirates.",
+                     "Give a minion Deathrattle: Summon three 5/5 Pirates.",
+                     "At the end of your turn, summon three 5/5 Pirates."] {
+            let result = score(ArenaCard(id: "S", name: "Conditional", cost: 4, type: "SPELL", text: text))
+            XCTAssertFalse(result.factors.contains { $0.key == "summon" })
+            XCTAssertFalse(result.explanation.contains("board refill"))
+        }
+    }
+    func testUnknownEffectsAreAttributedToScoringLimitsNotMissingCardData() {
+        let card = ArenaCard(id: "U", name: "Unsupported Effect", cost: 4, type: "SPELL", text: "Do a genuinely new effect.")
+        XCTAssertTrue(score(card).explanation.contains("current scoring rules"))
+        XCTAssertFalse(score(card).explanation.contains("card information available"))
     }
 }

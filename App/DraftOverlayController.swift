@@ -2,23 +2,30 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-// ArenaMate now has just one window: the compact, floating drafting UI.
-// This adapter configures the SwiftUI WindowGroup's NSWindow without a second panel.
+// ArenaMate has one visible window: the compact drafting NSPanel.
+// Apply its appearance when the hosted view actually attaches to a window.
 struct FloatingWindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { configure(view.window) }
+        let view = WindowAttachmentView()
+        view.onWindowChanged = configure
         return view
     }
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async { configure(nsView.window) }
+    }
+    private final class WindowAttachmentView: NSView {
+        var onWindowChanged: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            onWindowChanged?(window)
+        }
     }
     private func configure(_ window: NSWindow?) {
         guard let window else { return }
         // Higher window level and cross-application Space membership are needed
         // for a regular AppKit window to appear in native fullscreen Spaces.
         // Some games use exclusive fullscreen rendering that still blocks overlays.
-        window.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .stationary, .fullScreenAuxiliary]
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         window.level = .screenSaver
         window.isMovableByWindowBackground = true
         window.title = "ArenaMate"
@@ -40,6 +47,7 @@ final class DraftOverlayController {
 
 struct OverlayView: View {
     @ObservedObject var store: DraftStore
+    @EnvironmentObject private var updates: AppUpdates
     @State private var showSettings = false
     @State private var showDraftHistory = false
     @State private var ratingsPicker = false
@@ -193,6 +201,8 @@ struct OverlayView: View {
     private var settingsPopover: some View {
         VStack(alignment: .leading, spacing: 11) {
             Text("Draft settings").font(.headline)
+            Button("Check for Updates…") { updates.checkForUpdates() }
+                .disabled(!updates.canCheckForUpdates)
             HStack {
                 Text("Class: " + store.playerClass.replacingOccurrences(of: "DEATHKNIGHT", with: "DEATH KNIGHT")
                     .replacingOccurrences(of: "DEMONHUNTER", with: "DEMON HUNTER").capitalized)
@@ -216,9 +226,11 @@ struct OverlayView: View {
                 Text("\(store.cardCount) cards").font(.caption2).foregroundStyle(.secondary)
             }
             HStack {
-                Button("Import ratings CSV") { ratingsPicker = true }
-                Text("\(store.ratingsCount) ratings").font(.caption2).foregroundStyle(.secondary)
+                Button("Refresh Arena ratings") { Task { await store.refreshPerformanceRatings(force: true) } }
+                Text("\(store.ratingsCount)").font(.caption2).foregroundStyle(.secondary)
             }
+            Text(store.ratingSource).font(.caption2).foregroundStyle(.secondary)
+            Button("Import ratings CSV…") { ratingsPicker = true }
             Button("Enable Arena logging") { store.enableArenaLogs() }
             Button("Copy OCR report") { store.copyScanDiagnostics() }
             Button("New draft") { confirmReset = true }
