@@ -341,7 +341,7 @@ final class RecommendationExplanationTests: XCTestCase {
             let card = ArenaCard(id: "R", name: "Strong Minion", cost: 4, type: "MINION", mechanics: [mechanic])
             let explanation = score(card).explanation
             XCTAssertTrue(explanation.contains("Strong Minion"))
-            XCTAssertTrue(explanation.contains("standalone value"))
+            XCTAssertFalse(explanation.contains("standalone"))
             XCTAssertFalse(explanation.lowercased().contains(mechanic.lowercased()))
         }
         let plain = ArenaCard(id: "V", name: "Plain Minion", cost: 4, type: "MINION")
@@ -397,5 +397,83 @@ final class SidebarTitleRegressionTests: XCTestCase {
         var missing = lines
         missing.remove(at: 1)
         XCTAssertNil(OfferRecognition.findOffer(lines: missing, catalog: catalog, playerClass: "ALL").names)
+    }
+}
+
+final class ExplicitRationaleTests: XCTestCase {
+    private let hammer = ArenaCard(id: "H", name: "Hammer of Wrath", cost: 4, type: "SPELL", text: "Deal 3 damage. Draw a card.")
+    private let cult = ArenaCard(id: "C", name: "Cult Neophyte", cost: 2, type: "MINION", attack: 3, health: 2)
+    private let body = ArenaCard(id: "B", name: "Plain Minion", cost: 4, type: "MINION", attack: 4, health: 5)
+    private func score(_ card: ArenaCard, picks: [DraftPick] = []) -> ScoreDetail {
+        DraftScorer.score(card, picks: picks, ratings: ExternalRatings(), playerClass: "PALADIN")
+    }
+    private func explain(_ offers: [ArenaCard], picks: [DraftPick] = [], ratings: ExternalRatings = ExternalRatings()) -> String? {
+        DraftScorer.recommendation(offers: offers, picks: picks, ratings: ratings, playerClass: "PALADIN")
+    }
+    func testHammerComparedWithActualRunnerUpForDamageAndDraw() throws {
+        let text = try XCTUnwrap(explain([body, hammer, cult]))
+        XCTAssertTrue(text.contains("Hammer of Wrath over Cult Neophyte"))
+        XCTAssertTrue(text.contains("damage"))
+        XCTAssertTrue(text.contains("card draw"))
+        XCTAssertFalse(text.contains("standalone"))
+        XCTAssertFalse(text.contains("highest estimated"))
+    }
+    func testDrawContextUsesActualDraftAndDoesNotMissDrawFour() {
+        let picks = Array(repeating: DraftPick(card: body, score: 48), count: 5)
+        XCTAssertTrue(score(hammer, picks: picks).explanation.contains("None of your 5 drafted cards"))
+        let drawFour = ArenaCard(id: "D", name: "Big Draw", type: "SPELL", text: "Draw 4 cards.")
+        let covered = picks + [DraftPick(card: drawFour, score: 50)]
+        XCTAssertFalse(score(hammer, picks: covered).explanation.contains("provide card draw yet"))
+    }
+    func testRecoveryContextDoesNotInventCurrentHealthAndRecognizesGrantedLifesteal() {
+        let lifesteal = ArenaCard(id: "L", name: "Recovery Minion", cost: 4, type: "MINION", mechanics: ["LIFESTEAL"], attack: 4, health: 5)
+        let picks = Array(repeating: DraftPick(card: body, score: 48), count: 5)
+        let text = score(lifesteal, picks: picks).explanation
+        XCTAssertTrue(text.contains("haven't drafted a recovery card"))
+        XCTAssertFalse(text.contains("low health"))
+        XCTAssertFalse(text.contains("when this deals damage"))
+        let aura = ArenaCard(id: "A", name: "Deputization Aura", type: "SPELL", text: "Your left-most minion has +2 Attack and Lifesteal.")
+        XCTAssertFalse(score(lifesteal, picks: picks + [DraftPick(card: aura, score: 50)]).explanation.contains("haven't drafted a recovery card"))
+    }
+    func testNamedSynergyTakesPriorityOverIndividualCardComparison() throws {
+        let mech = ArenaCard(id: "M", name: "Muscle-o-Tron", cost: 3, type: "MINION", races: ["MECHANICAL"])
+        let magnetic = ArenaCard(id: "N", name: "Noble Minibot", cost: 2, type: "MINION", mechanics: ["MAGNETIC"], attack: 10, health: 10)
+        let text = try XCTUnwrap(explain([magnetic, body, cult], picks: [DraftPick(card: mech, score: 50)]))
+        XCTAssertTrue(text.contains("Muscle-o-Tron"))
+        XCTAssertFalse(text.contains("standalone"))
+    }
+    func testImportedRatingsAreComparedAsRatingsAndMixedSourcesNotConflated() throws {
+        var ratings = ExternalRatings(); ratings.byId["H"] = 90; ratings.byId["C"] = 80
+        let text = try XCTUnwrap(explain([hammer, cult, body], ratings: ratings))
+        XCTAssertTrue(text.contains("Hammer of Wrath at 90"))
+        XCTAssertTrue(text.contains("Cult Neophyte at 80/100"))
+        ratings.byId.removeValue(forKey: "C")
+        let mixed = try XCTUnwrap(explain([hammer, cult, body], ratings: ratings))
+        XCTAssertTrue(mixed.contains("imported ratings give Hammer of Wrath 90/100"))
+        XCTAssertFalse(mixed.contains("Cult Neophyte at"))
+    }
+    func testTiesAndMissingMetadataAreExplicit() throws {
+        let same = ArenaCard(id: "S", name: "Same Stats", cost: 4, type: "MINION", attack: 4, health: 5)
+        let weak = ArenaCard(id: "W", name: "Weak Body", cost: 4, type: "MINION", attack: 1, health: 1)
+        XCTAssertTrue(try XCTUnwrap(explain([body, same, weak])).contains("tied in my estimate"))
+        XCTAssertNil(explain([hammer, cult]))
+        XCTAssertTrue(score(ArenaCard(id: "?", name: "Unknown")).explanation.contains("can't identify a specific advantage"))
+    }
+    func testContributionsPreserveExistingNumericScores() {
+        XCTAssertEqual(score(hammer).total, 72)
+        XCTAssertEqual(score(cult).base, 51)
+        XCTAssertEqual(score(cult).total, 54)
+        XCTAssertEqual(score(body).total, 48)
+        let rush = ArenaCard(id: "R", name: "Rush", cost: 4, type: "MINION", mechanics: ["RUSH"], attack: 4, health: 5)
+        XCTAssertEqual(score(rush).total, 57)
+        let both = ArenaCard(id: "D", name: "Discover and Draw", cost: 4, type: "SPELL", text: "Discover a spell. Draw a card.")
+        XCTAssertEqual(score(both).total, 67)
+        XCTAssertEqual(score(both).factors.first(where: { $0.key == "draw" })?.points, 4)
+        XCTAssertEqual(score(both).factors.first(where: { $0.key == "discover" })?.points, 11)
+    }
+    func testComparativeExplanationRetainsMissingSupportCaution() throws {
+        let payoff = ArenaCard(id: "P", name: "Unsupported Dragon", cost: 4, type: "MINION", text: "If you're holding a Dragon, gain +2/+2.", attack: 10, health: 10)
+        let text = try XCTUnwrap(explain([payoff, body, cult]))
+        XCTAssertTrue(text.contains("haven't drafted any Dragon support"))
     }
 }
