@@ -99,6 +99,12 @@ final class ArenaMateAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         let hostingView = NSHostingView(rootView: root)
         hostingView.frame = NSRect(x: 0, y: 0, width: 670, height: 250)
         panel.contentView = hostingView
+        let panelChrome = panel.frame.height - panel.contentRect(forFrameRect: panel.frame).height
+        let minimumContentHeight = max(1, 195 - panelChrome)
+        panel.contentMinSize = NSSize(width: 650, height: minimumContentHeight)
+        if panel.contentView?.frame.height ?? 0 < minimumContentHeight {
+            panel.setContentSize(NSSize(width: 670, height: minimumContentHeight))
+        }
         self.panel = panel
         panel.center()
         panel.makeKeyAndOrderFront(nil)
