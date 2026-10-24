@@ -46,8 +46,8 @@ struct FloatingWindowConfigurator: NSViewRepresentable {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         window.level = .screenSaver
         window.isMovableByWindowBackground = true
-        window.title = "ArenaMate"
-        window.titleVisibility = .hidden
+        window.title = "ARENAMATE"
+        window.titleVisibility = .visible
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(red: 0.17, green: 0.105, blue: 0.066, alpha: 1)
         window.minSize = NSSize(width: 650, height: 195)
@@ -59,7 +59,7 @@ struct FloatingWindowConfigurator: NSViewRepresentable {
             hostingView.identifier = identifier
             hostingView.frame = NSRect(x: 0, y: 0, width: 28, height: 24)
             accessory.view = hostingView
-            accessory.layoutAttribute = .left
+            accessory.layoutAttribute = .right
             window.addTitlebarAccessoryViewController(accessory)
         }
     }
@@ -98,17 +98,6 @@ struct OverlayView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text("ARENAMATE")
-                    .font(.system(size: 14, weight: .heavy, design: .serif))
-                    .tracking(1.1).foregroundStyle(parchment)
-                    .popover(isPresented: $showSettings) { settingsPopover }
-                    .popover(isPresented: $showDraftHistory) { historyPopover }
-                Spacer()
-            }
-            .buttonStyle(.borderless)
-            .padding(.top, 3)
-
             HStack(spacing: 8) {
                 ForEach(0..<3, id: \.self) { i in
                     Button { if hasOffer { store.recordPick(i) } } label: {
@@ -225,6 +214,12 @@ struct OverlayView: View {
         .background(wood)
         .preferredColorScheme(.dark)
         .background(FloatingWindowConfigurator().frame(width: 0, height: 0))
+        .overlay(alignment: .topTrailing) {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .popover(isPresented: $showSettings) { settingsPopover }
+                .popover(isPresented: $showDraftHistory) { historyPopover }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .arenaMateToggleSettings)) { _ in
             showDraftHistory = false
             showSettings.toggle()
